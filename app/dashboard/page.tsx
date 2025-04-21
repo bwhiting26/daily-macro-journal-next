@@ -4,7 +4,6 @@ import { Card, CardBody, Input, Progress, Button } from "@nextui-org/react";
 import Link from "next/link";
 import axios from "axios";
 
-// Define the Entry interface
 interface Entry {
   time: string;
   date: string;
@@ -16,7 +15,6 @@ interface Entry {
   };
 }
 
-// Define the Notification interface
 interface Notification {
   id: number;
   title: string;
@@ -31,7 +29,10 @@ export default function Dashboard() {
   const [proteinPercent, setProteinPercent] = useState<number>(35);
   const [fatPercent, setFatPercent] = useState<number>(30);
   const [carbPercent, setCarbPercent] = useState<number>(35);
-  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const savedNotifications = typeof window !== "undefined" ? localStorage.getItem("notifications") : null;
+  const [notifications, setNotifications] = useState<Notification[]>(
+    savedNotifications ? JSON.parse(savedNotifications) : []
+  );
   const [report, setReport] = useState("");
   const [dailyQuote, setDailyQuote] = useState<string | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(true);
@@ -62,10 +63,6 @@ export default function Dashboard() {
     const savedEntries = localStorage.getItem("macroEntries");
     if (savedEntries) {
       setEntries(JSON.parse(savedEntries));
-    }
-    const savedNotifications = localStorage.getItem("notifications");
-    if (savedNotifications) {
-      setNotifications(JSON.parse(savedNotifications));
     }
     const savedLearningPeriod = localStorage.getItem("learningPeriodComplete");
     if (savedLearningPeriod) {
@@ -122,6 +119,12 @@ export default function Dashboard() {
     if (notificationPermission !== "granted") return;
     if (learningPeriodComplete || uniqueDays.length !== 0) return;
 
+    // Check for existing "Welcome" notification
+    const hasWelcomeNotification = notifications.some(
+      (notification) => notification.title === "Welcome to Daily Macro Journal!"
+    );
+    if (hasWelcomeNotification) return;
+
     try {
       new Notification("Welcome to Daily Macro Journal!", {
         body: "We’re getting to know your eating habits—when you eat, what you enjoy, and how you balance your macros. Log your meals for 5 days, and we’ll start providing personalized insights to help you reach your goals! 🌟",
@@ -138,11 +141,17 @@ export default function Dashboard() {
     } catch (error) {
       console.error("Initial Notification Error:", error);
     }
-  }, [notificationPermission, learningPeriodComplete, uniqueDays.length]);
+  }, [notificationPermission, learningPeriodComplete, uniqueDays.length, notifications]);
 
   useEffect(() => {
     if (notificationPermission !== "granted") return;
     if (learningPeriodComplete || !hasEnoughData || hasCompletedLearningRef.current) return;
+
+    // Check for existing "Learning Period Complete" notification
+    const hasCompletionNotification = notifications.some(
+      (notification) => notification.title === "Learning Period Complete!"
+    );
+    if (hasCompletionNotification) return;
 
     try {
       new Notification("Learning Period Complete!", {
@@ -163,11 +172,22 @@ export default function Dashboard() {
     } catch (error) {
       console.error("Completion Notification Error:", error);
     }
-  }, [notificationPermission, hasEnoughData, learningPeriodComplete]);
+  }, [notificationPermission, hasEnoughData, learningPeriodComplete, notifications]);
 
   useEffect(() => {
     const savedDate = localStorage.getItem("dailyQuoteDate");
     if (savedDate === today && hasGeneratedQuoteRef.current) {
+      setQuoteLoading(false);
+      return;
+    }
+
+    // Check for existing "Daily Motivation" notification for today
+    const hasDailyMotivation = notifications.some(
+      (notification) =>
+        notification.title === "Daily Motivation" &&
+        new Date(notification.timestamp).toLocaleDateString("en-CA") === today
+    );
+    if (hasDailyMotivation) {
       setQuoteLoading(false);
       return;
     }
@@ -219,7 +239,7 @@ export default function Dashboard() {
 
     setQuoteLoading(true);
     generateQuote();
-  }, [today]);
+  }, [today, notifications]);
 
   useEffect(() => {
     if (notificationPermission !== "granted") return;
@@ -268,6 +288,14 @@ export default function Dashboard() {
       }
 
       if (currentMinutes - lastMealTime > avgGap) {
+        // Check for existing "Snack Time!" notification within the last 30 minutes
+        const recentSnackNotification = notifications.some(
+          (notification) =>
+            notification.title === "Snack Time! 🍎" &&
+            now.getTime() - notification.timestamp < 30 * 60 * 1000
+        );
+        if (recentSnackNotification) return;
+
         const prompt = `Suggest a quick snack to help meet macro goals. Keep it positive and concise. Current intake: Protein ${currentProtein}g/${proteinGrams}g, Fat ${currentFat}g/${fatGrams}g, Carbs ${currentCarbs}g/${carbGrams}g. Analyze the user's eating habits over the last 30 days to identify patterns and preferences (e.g., frequently eaten foods, avoided foods, typical meal times). Here are the recent entries: ${JSON.stringify(recentEntries)}. Suggest a snack that aligns with their eating habits and helps meet their macro goals.`;
         try {
           const response = await axios.post(
@@ -291,7 +319,7 @@ export default function Dashboard() {
             setNotifications((prev) => [...prev, newNotification]);
             setLastSnackReminder(nowTimestamp);
             localStorage.setItem("lastSnackReminder", nowTimestamp.toString());
-          } catch (error) {
+          } catch (error錢) {
             console.error("Notification Error:", error);
           }
         } catch (error) {
@@ -301,8 +329,9 @@ export default function Dashboard() {
     };
 
     const interval = setInterval(checkSnackTime, 30 * 60 * 1000);
+    checkSnackTime(); // Run immediately on mount to catch any immediate needs
     return () => clearInterval(interval);
-  }, [notificationPermission, entries, calorieGoal, proteinPercent, fatPercent, carbPercent, hasEnoughData]);
+  }, [notificationPermission, entries, calorieGoal, proteinPercent, fatPercent, carbPercent, hasEnoughData, notifications]);
 
   useEffect(() => {
     if (entries.length === 0) {
