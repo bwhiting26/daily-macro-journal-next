@@ -3,9 +3,22 @@ import { useState, useEffect } from "react";
 import { Card, CardBody, Input, Button } from "@nextui-org/react";
 import Link from "next/link";
 import axios from "axios";
+import { supabase } from "../supabase";
+
+interface Entry {
+  id?: number;
+  time: string;
+  date: string;
+  food: string;
+  macros: {
+    protein: string | number;
+    carbs: string | number;
+    fat: string | number;
+  };
+}
 
 export default function FoodJournal() {
-  const [entries, setEntries] = useState([]);
+  const [entries, setEntries] = useState<Entry[]>([]);
   const [foodInput, setFoodInput] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [entryDate, setEntryDate] = useState(new Date().toISOString().split("T")[0]);
@@ -15,15 +28,16 @@ export default function FoodJournal() {
   const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
-    const saved = localStorage.getItem("macroEntries");
-    if (saved) {
-      setEntries(JSON.parse(saved));
-    }
+    const fetchEntries = async () => {
+      const { data, error } = await supabase.from("entries").select("*");
+      if (error) {
+        console.error("Error fetching entries:", error);
+        return;
+      }
+      setEntries(data || []);
+    };
+    fetchEntries();
   }, []);
-
-  useEffect(() => {
-    localStorage.setItem("macroEntries", JSON.stringify(entries));
-  }, [entries]);
 
   const handleSearch = async () => {
     console.log("handleSearch called with foodInput:", foodInput);
@@ -46,9 +60,9 @@ export default function FoodJournal() {
     }
   };
 
-  const handleSelectFood = (food) => {
+  const handleSelectFood = async (food: any) => {
     const now = new Date();
-    const maxDate = now.toISOString().split("T")[0]; // e.g., "2025-04-21"
+    const maxDate = now.toISOString().split("T")[0];
     const selectedDate = new Date(entryDate);
     const todayDate = new Date(maxDate);
     const selectedDateTime = new Date(`${entryDate}T${entryTime}:00`);
@@ -73,19 +87,25 @@ export default function FoodJournal() {
       hour12: true,
     });
 
-    setEntries([
-      ...entries,
-      {
-        time: formattedTime,
-        date: entryDate,
-        food: food.food_name,
-        macros: {
-          protein: food.food_description.match(/Protein: (\d+\.?\d*)/)?.[1] || 0,
-          carbs: food.food_description.match(/Carbs: (\d+\.?\d*)/)?.[1] || 0,
-          fat: food.food_description.match(/Fat: (\d+\.?\d*)/)?.[1] || 0,
-        },
+    const newEntry = {
+      time: formattedTime,
+      date: entryDate,
+      food: food.food_name,
+      macros: {
+        protein: food.food_description.match(/Protein: (\d+\.?\d*)/)?.[1] || 0,
+        carbs: food.food_description.match(/Carbs: (\d+\.?\d*)/)?.[1] || 0,
+        fat: food.food_description.match(/Fat: (\d+\.?\d*)/)?.[1] || 0,
       },
-    ]);
+    };
+
+    // Save to Supabase
+    const { data, error } = await supabase.from("entries").insert([newEntry]).select();
+    if (error) {
+      console.error("Error saving entry to Supabase:", error);
+      return;
+    }
+
+    setEntries((prev) => [...prev, data[0]]);
     setSearchResults([]);
     setFoodInput("");
   };
@@ -139,7 +159,7 @@ export default function FoodJournal() {
           <Card className="mb-4">
             <CardBody>
               <h2 className="text-lg font-medium mb-2 text-gray-900">Search Results:</h2>
-              {searchResults.map((food) => (
+              {searchResults.map((food: any) => (
                 <div
                   key={food.food_id}
                   className="p-3 cursor-pointer hover:bg-gray-100 text-gray-900"
@@ -155,7 +175,7 @@ export default function FoodJournal() {
         )}
       </div>
       {entries.map((entry, index) => (
-        <Card key={index} className="mb-2">
+        <Card key={entry.id || index} className="mb-2">
           <CardBody className="text-gray-900">
             {entry.date} {entry.time} - {entry.food} (P: {entry.macros.protein}g, C: {entry.macros.carbs}g, F: {entry.macros.fat}g)
           </CardBody>
