@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import { Card, CardBody, Input, Progress, Button } from "@nextui-org/react";
 import Link from "next/link";
 import axios from "axios";
-import { supabase } from "../lib/supabase"; // Adjust path based on Step 1
+import { supabase } from "@/lib/supabase";
 
 interface Entry {
   time: string;
@@ -30,10 +30,7 @@ export default function Dashboard() {
   const [proteinPercent, setProteinPercent] = useState<number>(35);
   const [fatPercent, setFatPercent] = useState<number>(30);
   const [carbPercent, setCarbPercent] = useState<number>(35);
-  const savedNotifications = typeof window !== "undefined" ? localStorage.getItem("notifications") : null;
-  const [notifications, setNotifications] = useState<Notification[]>(
-    savedNotifications ? JSON.parse(savedNotifications) : []
-  );
+  const [notifications, setNotifications] = useState<Notification[]>([]);
   const [report, setReport] = useState("");
   const [dailyQuote, setDailyQuote] = useState<string | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(true);
@@ -43,37 +40,102 @@ export default function Dashboard() {
     typeof Notification !== "undefined" ? Notification.permission : "denied"
   );
   const [lastSnackReminder, setLastSnackReminder] = useState<number | null>(null);
-  const [today, setToday] = useState(""); // Initialize as empty string
+  const [today, setToday] = useState("");
 
   const hasCompletedLearningRef = useRef(learningPeriodComplete);
   const hasGeneratedQuoteRef = useRef(false);
   const hasGeneratedReportRef = useRef(false);
 
   useEffect(() => {
-    // Set today on the client side
     setToday(new Date().toLocaleDateString("en-CA"));
 
-    const savedEntries = localStorage.getItem("macroEntries");
-    if (savedEntries) {
-      setEntries(JSON.parse(savedEntries));
-    }
-    const savedLearningPeriod = localStorage.getItem("learningPeriodComplete");
-    if (savedLearningPeriod) {
-      setLearningPeriodComplete(JSON.parse(savedLearningPeriod));
-    }
-    const savedFirstEntryDate = localStorage.getItem("firstEntryDate");
-    if (savedFirstEntryDate) {
-      setFirstEntryDate(savedFirstEntryDate);
-    }
-    const savedQuote = localStorage.getItem("dailyQuote");
-    const savedQuoteDate = localStorage.getItem("dailyQuoteDate");
-    if (savedQuote && savedQuoteDate === new Date().toLocaleDateString("en-CA")) {
-      setDailyQuote(savedQuote);
-    }
-    const savedLastSnackReminder = localStorage.getItem("lastSnackReminder");
-    if (savedLastSnackReminder) {
-      setLastSnackReminder(parseInt(savedLastSnackReminder, 10));
-    }
+    const fetchEntries = async () => {
+      const { data, error: entriesError } = await supabase.from("entries").select("*");
+      if (entriesError) {
+        console.error("Error fetching entries:", entriesError);
+        return;
+      }
+      setEntries(data || []);
+    };
+
+    const fetchNotifications = async () => {
+      const { data, error: notificationsError } = await supabase
+        .from("notifications")
+        .select("*")
+        .order("timestamp", { ascending: false });
+      if (notificationsError) {
+        console.error("Error fetching notifications:", notificationsError);
+        return;
+      }
+      setNotifications(data || []);
+    };
+
+    const fetchLearningPeriod = async () => {
+      const { data, error: learningError } = await supabase
+        .from("settings")
+        .select("value")
+        .eq("key", "learningPeriodComplete")
+        .maybeSingle();
+      if (learningError) {
+        console.error("Error fetching learning period:", JSON.stringify(learningError, null, 2));
+        return;
+      }
+      if (data && data.value !== undefined) {
+        setLearningPeriodComplete(data.value);
+      }
+    };
+
+    const fetchFirstEntryDate = async () => {
+      const { data, error: firstEntryError } = await supabase
+        .from("settings")
+        .select("value")
+        .eq("key", "firstEntryDate")
+        .maybeSingle();
+      if (firstEntryError) {
+        console.error("Error fetching first entry date:", JSON.stringify(firstEntryError, null, 2));
+        return;
+      }
+      if (data && data.value !== undefined) {
+        setFirstEntryDate(data.value);
+      }
+    };
+
+    const fetchQuote = async () => {
+      const { data, error: quoteError } = await supabase
+        .from("settings")
+        .select("value")
+        .eq("key", "dailyQuote")
+        .maybeSingle();
+      if (quoteError) {
+        console.error("Error fetching daily quote:", JSON.stringify(quoteError, null, 2));
+        return;
+      }
+      if (data && data.value && data.value.dailyQuoteDate === new Date().toLocaleDateString("en-CA")) {
+        setDailyQuote(data.value.dailyQuote);
+      }
+    };
+
+    const fetchLastSnackReminder = async () => {
+      const { data, error: snackError } = await supabase
+        .from("settings")
+        .select("value")
+        .eq("key", "lastSnackReminder")
+        .maybeSingle();
+      if (snackError) {
+        console.error("Error fetching last snack reminder:", JSON.stringify(snackError, null, 2));
+        return;
+      }
+      if (data && data.value !== undefined) {
+        setLastSnackReminder(data.value);
+      }
+    };
+
+    fetchEntries();
+    fetchNotifications();
+    fetchLearningPeriod();
+    fetchFirstEntryDate();
+    fetchQuote();
+    fetchLastSnackReminder();
   }, []);
 
   const proteinGrams = ((proteinPercent / 100) * calorieGoal) / 4;
@@ -89,14 +151,6 @@ export default function Dashboard() {
   const isFirstDay = entries.length === 0 || (firstEntryDate && today === firstEntryDate);
 
   useEffect(() => {
-    localStorage.setItem("macroEntries", JSON.stringify(entries));
-  }, [entries]);
-
-  useEffect(() => {
-    localStorage.setItem("notifications", JSON.stringify(notifications));
-  }, [notifications]);
-
-  useEffect(() => {
     if (entries.length > 0 && !firstEntryDate) {
       const earliestEntry = entries.reduce((earliest, entry) => {
         const entryDate = new Date(entry.date);
@@ -104,7 +158,12 @@ export default function Dashboard() {
       }, null);
       const firstDate = earliestEntry.date;
       setFirstEntryDate(firstDate);
-      localStorage.setItem("firstEntryDate", firstDate);
+      supabase
+        .from("settings")
+        .upsert({ key: "firstEntryDate", value: firstDate })
+        .then(({ error: upsertError }) => {
+          if (upsertError) console.error("Error saving first entry date:", upsertError);
+        });
     }
   }, [entries, firstEntryDate]);
 
@@ -121,7 +180,7 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    if (!today) return; // Wait until today is set
+    if (!today) return;
     if (notificationPermission !== "granted") return;
     if (learningPeriodComplete || uniqueDays.length !== 0) return;
 
@@ -142,7 +201,16 @@ export default function Dashboard() {
         timestamp: nowTimestamp,
         read: false,
       };
-      setNotifications((prev) => [...prev, newNotification]);
+      supabase
+        .from("notifications")
+        .insert([newNotification])
+        .then(({ error: insertError }) => {
+          if (insertError) {
+            console.error("Error saving welcome notification:", insertError);
+          } else {
+            setNotifications((prev) => [...prev, newNotification]);
+          }
+        });
     } catch (error) {
       console.error("Initial Notification Error:", error);
     }
@@ -170,9 +238,23 @@ export default function Dashboard() {
         timestamp: nowTimestamp,
         read: false,
       };
-      setNotifications((prev) => [...prev, newNotification]);
-      setLearningPeriodComplete(true);
-      localStorage.setItem("learningPeriodComplete", JSON.stringify(true));
+      supabase
+        .from("notifications")
+        .insert([newNotification])
+        .then(({ error: insertError }) => {
+          if (insertError) {
+            console.error("Error saving completion notification:", insertError);
+          } else {
+            setNotifications((prev) => [...prev, newNotification]);
+            setLearningPeriodComplete(true);
+            supabase
+              .from("settings")
+              .upsert({ key: "learningPeriodComplete", value: true })
+              .then(({ error: upsertError }) => {
+                if (upsertError) console.error("Error saving learning period:", upsertError);
+              });
+          }
+        });
       hasCompletedLearningRef.current = true;
     } catch (error) {
       console.error("Completion Notification Error:", error);
@@ -181,12 +263,6 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!today) return;
-    const savedDate = localStorage.getItem("dailyQuoteDate");
-    if (savedDate === today && hasGeneratedQuoteRef.current) {
-      setQuoteLoading(false);
-      return;
-    }
-
     const hasDailyMotivation = notifications.some(
       (notification) =>
         notification.title === "Daily Motivation" &&
@@ -207,9 +283,9 @@ export default function Dashboard() {
         );
         const quote = response.data.text;
         setDailyQuote(quote);
-        localStorage.setItem("dailyQuote", quote);
-        localStorage.setItem("dailyQuoteDate", today);
-        hasGeneratedQuoteRef.current = true;
+        await supabase
+          .from("settings")
+          .upsert({ key: "dailyQuote", value: { dailyQuote: quote, dailyQuoteDate: today } });
 
         const nowTimestamp = new Date().getTime();
         const newNotification = {
@@ -219,14 +295,20 @@ export default function Dashboard() {
           timestamp: nowTimestamp,
           read: false,
         };
-        setNotifications((prev) => [...prev, newNotification]);
+        const { error: insertError } = await supabase.from("notifications").insert([newNotification]);
+        if (insertError) {
+          console.error("Error saving daily motivation notification:", insertError);
+        } else {
+          setNotifications((prev) => [...prev, newNotification]);
+        }
+        hasGeneratedQuoteRef.current = true;
       } catch (error) {
         console.error("Error generating motivational quote:", error);
         const fallbackQuote = "Keep pushing forward—you’ve got this!";
         setDailyQuote(fallbackQuote);
-        localStorage.setItem("dailyQuote", fallbackQuote);
-        localStorage.setItem("dailyQuoteDate", today);
-        hasGeneratedQuoteRef.current = true;
+        await supabase
+          .from("settings")
+          .upsert({ key: "dailyQuote", value: { dailyQuote: fallbackQuote, dailyQuoteDate: today } });
 
         const nowTimestamp = new Date().getTime();
         const newNotification = {
@@ -236,7 +318,13 @@ export default function Dashboard() {
           timestamp: nowTimestamp,
           read: false,
         };
-        setNotifications((prev) => [...prev, newNotification]);
+        const { error: insertError } = await supabase.from("notifications").insert([newNotification]);
+        if (insertError) {
+          console.error("Error saving fallback notification:", insertError);
+        } else {
+          setNotifications((prev) => [...prev, newNotification]);
+        }
+        hasGeneratedQuoteRef.current = true;
       } finally {
         setQuoteLoading(false);
       }
@@ -321,9 +409,16 @@ export default function Dashboard() {
               timestamp: nowTimestamp,
               read: false,
             };
-            setNotifications((prev) => [...prev, newNotification]);
-            setLastSnackReminder(nowTimestamp);
-            localStorage.setItem("lastSnackReminder", nowTimestamp.toString());
+            const { error: insertError } = await supabase.from("notifications").insert([newNotification]);
+            if (insertError) {
+              console.error("Error saving snack notification:", insertError);
+            } else {
+              setNotifications((prev) => [...prev, newNotification]);
+              setLastSnackReminder(nowTimestamp);
+              await supabase
+                .from("settings")
+                .upsert({ key: "lastSnackReminder", value: nowTimestamp });
+            }
           } catch (error) {
             console.error("Notification Error:", error);
           }
@@ -383,8 +478,9 @@ export default function Dashboard() {
           { headers: { "Content-Type": "application/json" } }
         );
         setReport(response.data.text);
-        localStorage.setItem("dailyReport", response.data.text);
-        localStorage.setItem("dailyReportDate", today);
+        await supabase
+          .from("settings")
+          .upsert({ key: "𝑑𝑎𝑖𝑙𝑦𝑅𝑒𝑝𝑜𝑟𝑡", value: { dailyReport: response.data.text, dailyReportDate: today } });
         hasGeneratedReportRef.current = true;
       } catch (error) {
         console.error("Error generating report:", error);
@@ -395,7 +491,7 @@ export default function Dashboard() {
     generateReport();
   }, [calorieGoal, proteinPercent, fatPercent, carbPercent, entries, today]);
 
-  if (!today) return null; // Prevent rendering until today is set
+  if (!today) return null;
 
   return (
     <div className="min-h-screen bg-gray-100 p-6">

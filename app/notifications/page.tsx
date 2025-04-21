@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { Card, CardBody, Button } from "@nextui-org/react";
 import Link from "next/link";
+import { supabase } from "@/lib/supabase";
 
 interface Notification {
   id: number;
@@ -12,40 +13,42 @@ interface Notification {
 }
 
 export default function Notifications() {
-  const savedNotifications = typeof window !== "undefined" ? localStorage.getItem("notifications") : null;
-  const [notifications, setNotifications] = useState<Notification[]>(
-    savedNotifications ? JSON.parse(savedNotifications) : []
-  );
+  const [notifications, setNotifications] = useState<Notification[]>([]);
 
   useEffect(() => {
-    // Listen for changes to localStorage (e.g., when Dashboard updates notifications)
-    const handleStorageChange = () => {
-      const updatedNotifications = localStorage.getItem("notifications");
-      if (updatedNotifications) {
-        setNotifications(JSON.parse(updatedNotifications));
+    const fetchNotifications = async () => {
+      const { data, error } = await supabase
+        .from("notifications")
+        .select("*")
+        .order("timestamp", { ascending: false });
+      if (error) {
+        console.error("Error fetching notifications:", error);
+        return;
       }
+      setNotifications(data || []);
     };
 
-    // Add event listener for storage changes
-    window.addEventListener("storage", handleStorageChange);
-
-    // Sync with localStorage on mount in case Dashboard updated it
-    handleStorageChange();
-
-    return () => {
-      window.removeEventListener("storage", handleStorageChange);
-    };
+    fetchNotifications();
   }, []);
 
-  useEffect(() => {
-    localStorage.setItem("notifications", JSON.stringify(notifications));
-  }, [notifications]);
-
-  const handleDismiss = (id: number) => {
+  const handleDismiss = async (id: number) => {
+    const { error } = await supabase.from("notifications").delete().eq("id", id);
+    if (error) {
+      console.error("Error deleting notification:", error);
+      return;
+    }
     setNotifications((prev) => prev.filter((notification) => notification.id !== id));
   };
 
-  const handleMarkAsRead = (id: number) => {
+  const handleMarkAsRead = async (id: number) => {
+    const { error } = await supabase
+      .from("notifications")
+      .update({ read: true })
+      .eq("id", id);
+    if (error) {
+      console.error("Error marking notification as read:", error);
+      return;
+    }
     setNotifications((prev) =>
       prev.map((notification) =>
         notification.id === id ? { ...notification, read: true } : notification
