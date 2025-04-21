@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import { Card, CardBody, Input, Progress, Button } from "@nextui-org/react";
 import Link from "next/link";
 import axios from "axios";
+import { supabase } from "../lib/supabase"; // Adjust path based on Step 1
 
 interface Entry {
   time: string;
@@ -42,24 +43,16 @@ export default function Dashboard() {
     typeof Notification !== "undefined" ? Notification.permission : "denied"
   );
   const [lastSnackReminder, setLastSnackReminder] = useState<number | null>(null);
-  const today = new Date().toLocaleDateString("en-CA");
+  const [today, setToday] = useState(""); // Initialize as empty string
+
   const hasCompletedLearningRef = useRef(learningPeriodComplete);
   const hasGeneratedQuoteRef = useRef(false);
   const hasGeneratedReportRef = useRef(false);
 
-  const proteinGrams = ((proteinPercent / 100) * calorieGoal) / 4;
-  const fatGrams = ((fatPercent / 100) * calorieGoal) / 9;
-  const carbGrams = ((carbPercent / 100) * calorieGoal) / 4;
-  const todayEntries = Array.isArray(entries) ? entries.filter((entry) => entry.date === today) : [];
-  const currentProtein = todayEntries.reduce((sum, entry) => sum + Number(entry.macros?.protein || 0), 0);
-  const currentFat = todayEntries.reduce((sum, entry) => sum + Number(entry.macros?.fat || 0), 0);
-  const currentCarbs = todayEntries.reduce((sum, entry) => sum + Number(entry.macros?.carbs || 0), 0);
-
-  const uniqueDays = [...new Set(entries.map((entry) => entry.date))];
-  const hasEnoughData = uniqueDays.length >= 5;
-  const isFirstDay = entries.length === 0 || (firstEntryDate && today === firstEntryDate);
-
   useEffect(() => {
+    // Set today on the client side
+    setToday(new Date().toLocaleDateString("en-CA"));
+
     const savedEntries = localStorage.getItem("macroEntries");
     if (savedEntries) {
       setEntries(JSON.parse(savedEntries));
@@ -74,7 +67,7 @@ export default function Dashboard() {
     }
     const savedQuote = localStorage.getItem("dailyQuote");
     const savedQuoteDate = localStorage.getItem("dailyQuoteDate");
-    if (savedQuote && savedQuoteDate === today) {
+    if (savedQuote && savedQuoteDate === new Date().toLocaleDateString("en-CA")) {
       setDailyQuote(savedQuote);
     }
     const savedLastSnackReminder = localStorage.getItem("lastSnackReminder");
@@ -82,6 +75,18 @@ export default function Dashboard() {
       setLastSnackReminder(parseInt(savedLastSnackReminder, 10));
     }
   }, []);
+
+  const proteinGrams = ((proteinPercent / 100) * calorieGoal) / 4;
+  const fatGrams = ((fatPercent / 100) * calorieGoal) / 9;
+  const carbGrams = ((carbPercent / 100) * calorieGoal) / 4;
+  const todayEntries = today ? (Array.isArray(entries) ? entries.filter((entry) => entry.date === today) : []) : [];
+  const currentProtein = todayEntries.reduce((sum, entry) => sum + Number(entry.macros?.protein || 0), 0);
+  const currentFat = todayEntries.reduce((sum, entry) => sum + Number(entry.macros?.fat || 0), 0);
+  const currentCarbs = todayEntries.reduce((sum, entry) => sum + Number(entry.macros?.carbs || 0), 0);
+
+  const uniqueDays = today ? [...new Set(entries.map((entry) => entry.date))] : [];
+  const hasEnoughData = uniqueDays.length >= 5;
+  const isFirstDay = entries.length === 0 || (firstEntryDate && today === firstEntryDate);
 
   useEffect(() => {
     localStorage.setItem("macroEntries", JSON.stringify(entries));
@@ -116,10 +121,10 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
+    if (!today) return; // Wait until today is set
     if (notificationPermission !== "granted") return;
     if (learningPeriodComplete || uniqueDays.length !== 0) return;
 
-    // Check for existing "Welcome" notification
     const hasWelcomeNotification = notifications.some(
       (notification) => notification.title === "Welcome to Daily Macro Journal!"
     );
@@ -141,13 +146,13 @@ export default function Dashboard() {
     } catch (error) {
       console.error("Initial Notification Error:", error);
     }
-  }, [notificationPermission, learningPeriodComplete, uniqueDays.length, notifications]);
+  }, [notificationPermission, learningPeriodComplete, uniqueDays.length, notifications, today]);
 
   useEffect(() => {
+    if (!today) return;
     if (notificationPermission !== "granted") return;
     if (learningPeriodComplete || !hasEnoughData || hasCompletedLearningRef.current) return;
 
-    // Check for existing "Learning Period Complete" notification
     const hasCompletionNotification = notifications.some(
       (notification) => notification.title === "Learning Period Complete!"
     );
@@ -172,16 +177,16 @@ export default function Dashboard() {
     } catch (error) {
       console.error("Completion Notification Error:", error);
     }
-  }, [notificationPermission, hasEnoughData, learningPeriodComplete, notifications]);
+  }, [notificationPermission, hasEnoughData, learningPeriodComplete, notifications, today]);
 
   useEffect(() => {
+    if (!today) return;
     const savedDate = localStorage.getItem("dailyQuoteDate");
     if (savedDate === today && hasGeneratedQuoteRef.current) {
       setQuoteLoading(false);
       return;
     }
 
-    // Check for existing "Daily Motivation" notification for today
     const hasDailyMotivation = notifications.some(
       (notification) =>
         notification.title === "Daily Motivation" &&
@@ -242,6 +247,7 @@ export default function Dashboard() {
   }, [today, notifications]);
 
   useEffect(() => {
+    if (!today) return;
     if (notificationPermission !== "granted") return;
     if (!hasEnoughData) return;
 
@@ -288,7 +294,6 @@ export default function Dashboard() {
       }
 
       if (currentMinutes - lastMealTime > avgGap) {
-        // Check for existing "Snack Time!" notification within the last 30 minutes
         const recentSnackNotification = notifications.some(
           (notification) =>
             notification.title === "Snack Time! 🍎" &&
@@ -319,7 +324,7 @@ export default function Dashboard() {
             setNotifications((prev) => [...prev, newNotification]);
             setLastSnackReminder(nowTimestamp);
             localStorage.setItem("lastSnackReminder", nowTimestamp.toString());
-          } catch (error錢) {
+          } catch (error) {
             console.error("Notification Error:", error);
           }
         } catch (error) {
@@ -329,15 +334,16 @@ export default function Dashboard() {
     };
 
     const interval = setInterval(checkSnackTime, 30 * 60 * 1000);
-    checkSnackTime(); // Run immediately on mount to catch any immediate needs
+    checkSnackTime();
     return () => clearInterval(interval);
-  }, [notificationPermission, entries, calorieGoal, proteinPercent, fatPercent, carbPercent, hasEnoughData, notifications]);
+  }, [notificationPermission, entries, calorieGoal, proteinPercent, fatPercent, carbPercent, hasEnoughData, notifications, today]);
 
   useEffect(() => {
     if (entries.length === 0) {
       setReport("Log your first meal to start tracking your macros!");
       return;
     }
+    if (!today) return;
     const generateReport = async () => {
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
@@ -387,7 +393,9 @@ export default function Dashboard() {
       }
     };
     generateReport();
-  }, [calorieGoal, proteinPercent, fatPercent, carbPercent, entries]);
+  }, [calorieGoal, proteinPercent, fatPercent, carbPercent, entries, today]);
+
+  if (!today) return null; // Prevent rendering until today is set
 
   return (
     <div className="min-h-screen bg-gray-100 p-6">

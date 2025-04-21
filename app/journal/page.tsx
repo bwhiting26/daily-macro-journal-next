@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import { Card, CardBody, Input, Button } from "@nextui-org/react";
 import Link from "next/link";
 import axios from "axios";
-import { supabase } from "../supabase";
+import { supabase } from "@/lib/supabase";
 
 interface Entry {
   id?: number;
