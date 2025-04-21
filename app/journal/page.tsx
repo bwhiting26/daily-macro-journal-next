@@ -12,6 +12,7 @@ export default function FoodJournal() {
   const [entryTime, setEntryTime] = useState(
     new Date().toTimeString().split(" ")[0].slice(0, 5)
   );
+  const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
     const saved = localStorage.getItem("macroEntries");
@@ -37,19 +38,41 @@ export default function FoodJournal() {
       const results = response.data.foods?.food || [];
       console.log("Parsed search results:", results);
       setSearchResults(results);
+      console.log("searchResults state updated:", results);
     } catch (error) {
       console.error("FoodJournal: Error searching foods:", error.message);
       console.error("Error details:", error.response?.data || error);
-      setSearchResults([]); // Ensure state is reset on error
+      setSearchResults([]);
     }
   };
 
   const handleSelectFood = (food) => {
-    const formattedTime = new Date(`${entryDate}T${entryTime}:00`).toLocaleTimeString([], {
+    const now = new Date();
+    const maxDate = now.toISOString().split("T")[0]; // e.g., "2025-04-21"
+    const selectedDate = new Date(entryDate);
+    const todayDate = new Date(maxDate);
+    const selectedDateTime = new Date(`${entryDate}T${entryTime}:00`);
+
+    if (selectedDate > todayDate) {
+      setErrorMessage("Cannot log a future date. Please select a date up to today.");
+      setEntryDate(maxDate);
+      return;
+    }
+
+    if (entryDate === maxDate && selectedDateTime > now) {
+      setErrorMessage("Cannot log a future time for today. Please select a time up to the current moment.");
+      setEntryTime(now.toTimeString().split(" ")[0].slice(0, 5));
+      return;
+    }
+
+    setErrorMessage("");
+
+    const formattedTime = selectedDateTime.toLocaleTimeString([], {
       hour: "numeric",
       minute: "2-digit",
       hour12: true,
     });
+
     setEntries([
       ...entries,
       {
@@ -75,6 +98,11 @@ export default function FoodJournal() {
           Back to Dashboard
         </Link>
       </nav>
+      {errorMessage && (
+        <div className="mb-4 p-3 bg-red-100 text-red-700 rounded">
+          {errorMessage}
+        </div>
+      )}
       <div className="mb-4 flex flex-col space-y-2">
         <div className="flex space-x-2">
           <Input
@@ -103,25 +131,29 @@ export default function FoodJournal() {
             value={entryTime}
             onChange={(e) => setEntryTime(e.target.value)}
             classNames={{ label: "text-gray-900" }}
-            />
-        </div> 
+          />
+        </div>
       </div>
-      {searchResults.length > 0 && (
-        <Card className="mb-4">
-          <CardBody>
-            <h2 className="text-lg font-medium mb-2 text-gray-900">Search Results:</h2>
-            {searchResults.map((food) => (
-              <div
-                key={food.food_id}
-                className="p-3 cursor-pointer hover:bg-gray-100 text-gray-900"
-                onClick={() => handleSelectFood(food)}
-              >
-                {food.food_name} - {food.food_description}
-              </div>
-            ))}
-          </CardBody>
-        </Card>
-      )}
+      <div className="mb-4">
+        {searchResults.length > 0 ? (
+          <Card className="mb-4">
+            <CardBody>
+              <h2 className="text-lg font-medium mb-2 text-gray-900">Search Results:</h2>
+              {searchResults.map((food) => (
+                <div
+                  key={food.food_id}
+                  className="p-3 cursor-pointer hover:bg-gray-100 text-gray-900"
+                  onClick={() => handleSelectFood(food)}
+                >
+                  {food.food_name} - {food.food_description}
+                </div>
+              ))}
+            </CardBody>
+          </Card>
+        ) : (
+          <p className="text-gray-900">No search results found.</p>
+        )}
+      </div>
       {entries.map((entry, index) => (
         <Card key={index} className="mb-2">
           <CardBody className="text-gray-900">
