@@ -22,8 +22,10 @@ export default function Dashboard() {
   const currentCarbs = todayEntries.reduce((sum, entry) => sum + (entry.macros?.carbs || 0), 0);
 
   useEffect(() => {
-    const savedEntries = localStorage.getItem("macroEntries");
-    if (savedEntries) setEntries(JSON.parse(savedEntries));
+    const saved = localStorage.getItem("macroEntries");
+    if (saved) {
+      setEntries(JSON.parse(saved));
+    }
   }, []);
 
   useEffect(() => {
