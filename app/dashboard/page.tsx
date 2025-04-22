@@ -4,6 +4,8 @@ import { Card, CardBody, Input, Progress, Button } from "@nextui-org/react";
 import Link from "next/link";
 import axios from "axios";
 import { supabase } from "@/lib/supabase";
+import { ProtectedRoute } from "../components/ProtectedRoute";
+import { v4 as uuidv4 } from "uuid";
 
 interface Entry {
   time: string;
@@ -17,14 +19,14 @@ interface Entry {
 }
 
 interface Notification {
-  id: number;
+  id: string; // Change to string to accommodate UUID
   title: string;
   body: string;
   timestamp: number;
   read: boolean;
 }
 
-export default function Dashboard() {
+function DashboardContent() {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [calorieGoal, setCalorieGoal] = useState<number>(2000);
   const [proteinPercent, setProteinPercent] = useState<number>(35);
@@ -50,7 +52,16 @@ export default function Dashboard() {
     setToday(new Date().toLocaleDateString("en-CA"));
 
     const fetchEntries = async () => {
-      const { data, error: entriesError } = await supabase.from("entries").select("*");
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError || !userData.user) {
+        console.error("User not authenticated:", userError);
+        return;
+      }
+      const userId = userData.user.id;
+      const { data, error: entriesError } = await supabase
+        .from("entries")
+        .select("*")
+        .eq("user_id", userId);
       if (entriesError) {
         console.error("Error fetching entries:", entriesError);
         return;
@@ -59,9 +70,16 @@ export default function Dashboard() {
     };
 
     const fetchNotifications = async () => {
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError || !userData.user) {
+        console.error("User not authenticated:", userError);
+        return;
+      }
+      const userId = userData.user.id;
       const { data, error: notificationsError } = await supabase
         .from("notifications")
         .select("*")
+        .eq("user_id", userId)
         .order("timestamp", { ascending: false });
       if (notificationsError) {
         console.error("Error fetching notifications:", notificationsError);
@@ -71,10 +89,17 @@ export default function Dashboard() {
     };
 
     const fetchLearningPeriod = async () => {
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError || !userData.user) {
+        console.error("User not authenticated:", userError);
+        return;
+      }
+      const userId = userData.user.id;
       const { data, error: learningError } = await supabase
         .from("settings")
         .select("value")
         .eq("key", "learningPeriodComplete")
+        .eq("user_id", userId)
         .maybeSingle();
       if (learningError) {
         console.error("Error fetching learning period:", JSON.stringify(learningError, null, 2));
@@ -86,10 +111,17 @@ export default function Dashboard() {
     };
 
     const fetchFirstEntryDate = async () => {
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError || !userData.user) {
+        console.error("User not authenticated:", userError);
+        return;
+      }
+      const userId = userData.user.id;
       const { data, error: firstEntryError } = await supabase
         .from("settings")
         .select("value")
         .eq("key", "firstEntryDate")
+        .eq("user_id", userId)
         .maybeSingle();
       if (firstEntryError) {
         console.error("Error fetching first entry date:", JSON.stringify(firstEntryError, null, 2));
@@ -101,10 +133,17 @@ export default function Dashboard() {
     };
 
     const fetchQuote = async () => {
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError || !userData.user) {
+        console.error("User not authenticated:", userError);
+        return;
+      }
+      const userId = userData.user.id;
       const { data, error: quoteError } = await supabase
         .from("settings")
         .select("value")
         .eq("key", "dailyQuote")
+        .eq("user_id", userId)
         .maybeSingle();
       if (quoteError) {
         console.error("Error fetching daily quote:", JSON.stringify(quoteError, null, 2));
@@ -116,10 +155,17 @@ export default function Dashboard() {
     };
 
     const fetchLastSnackReminder = async () => {
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError || !userData.user) {
+        console.error("User not authenticated:", userError);
+        return;
+      }
+      const userId = userData.user.id;
       const { data, error: snackError } = await supabase
         .from("settings")
         .select("value")
         .eq("key", "lastSnackReminder")
+        .eq("user_id", userId)
         .maybeSingle();
       if (snackError) {
         console.error("Error fetching last snack reminder:", JSON.stringify(snackError, null, 2));
@@ -158,12 +204,19 @@ export default function Dashboard() {
       }, null);
       const firstDate = earliestEntry.date;
       setFirstEntryDate(firstDate);
-      supabase
-        .from("settings")
-        .upsert({ key: "firstEntryDate", value: firstDate })
-        .then(({ error: upsertError }) => {
-          if (upsertError) console.error("Error saving first entry date:", upsertError);
-        });
+      supabase.auth.getUser().then(async ({ data: userData, error: userError }) => {
+        if (userError || !userData.user) {
+          console.error("User not authenticated:", userError);
+          return;
+        }
+        const userId = userData.user.id;
+        await supabase
+          .from("settings")
+          .upsert({ key: "firstEntryDate", value: firstDate, user_id: userId })
+          .then(({ error: upsertError }) => {
+            if (upsertError) console.error("Error saving first entry date:", upsertError);
+          });
+      });
     }
   }, [entries, firstEntryDate]);
 
@@ -194,23 +247,27 @@ export default function Dashboard() {
         body: "We’re getting to know your eating habits—when you eat, what you enjoy, and how you balance your macros. Log your meals for 5 days, and we’ll start providing personalized insights to help you reach your goals! 🌟",
       });
       const nowTimestamp = new Date().getTime();
-      const newNotification = {
-        id: nowTimestamp,
-        title: "Welcome to Daily Macro Journal!",
-        body: "We’re getting to know your eating habits—when you eat, what you enjoy, and how you balance your macros. Log your meals for 5 days, and we’ll start providing personalized insights to help you reach your goals! 🌟",
-        timestamp: nowTimestamp,
-        read: false,
-      };
-      supabase
-        .from("notifications")
-        .insert([newNotification])
-        .then(({ error: insertError }) => {
-          if (insertError) {
-            console.error("Error saving welcome notification:", insertError);
-          } else {
-            setNotifications((prev) => [...prev, newNotification]);
-          }
-        });
+      supabase.auth.getUser().then(async ({ data: userData, error: userError }) => {
+        if (userError || !userData.user) {
+          console.error("User not authenticated:", userError);
+          return;
+        }
+        const userId = userData.user.id;
+        const newNotification = {
+          id: uuidv4(),
+          title: "Welcome to Daily Macro Journal!",
+          body: "We’re getting to know your eating habits—when you eat, what you enjoy, and how you balance your macros. Log your meals for 5 days, and we’ll start providing personalized insights to help you reach your goals! 🌟",
+          timestamp: nowTimestamp,
+          read: false,
+          user_id: userId,
+        };
+        const { error: insertError } = await supabase.from("notifications").insert([newNotification]);
+        if (insertError) {
+          console.error("Error saving welcome notification:", insertError);
+        } else {
+          setNotifications((prev) => [...prev, newNotification]);
+        }
+      });
     } catch (error) {
       console.error("Initial Notification Error:", error);
     }
@@ -231,30 +288,34 @@ export default function Dashboard() {
         body: "We’ve learned your eating patterns! From now on, expect tailored insights to keep you on track—let’s make every meal count! 🎉",
       });
       const nowTimestamp = new Date().getTime();
-      const newNotification = {
-        id: nowTimestamp,
-        title: "Learning Period Complete!",
-        body: "We’ve learned your eating patterns! From now on, expect tailored insights to keep you on track—let’s make every meal count! 🎉",
-        timestamp: nowTimestamp,
-        read: false,
-      };
-      supabase
-        .from("notifications")
-        .insert([newNotification])
-        .then(({ error: insertError }) => {
-          if (insertError) {
-            console.error("Error saving completion notification:", insertError);
-          } else {
-            setNotifications((prev) => [...prev, newNotification]);
-            setLearningPeriodComplete(true);
-            supabase
-              .from("settings")
-              .upsert({ key: "learningPeriodComplete", value: true })
-              .then(({ error: upsertError }) => {
-                if (upsertError) console.error("Error saving learning period:", upsertError);
-              });
-          }
-        });
+      supabase.auth.getUser().then(async ({ data: userData, error: userError }) => {
+        if (userError || !userData.user) {
+          console.error("User not authenticated:", userError);
+          return;
+        }
+        const userId = userData.user.id;
+        const newNotification = {
+          id: uuidv4(),
+          title: "Learning Period Complete!",
+          body: "We’ve learned your eating patterns! From now on, expect tailored insights to keep you on track—let’s make every meal count! 🎉",
+          timestamp: nowTimestamp,
+          read: false,
+          user_id: userId,
+        };
+        const { error: insertError } = await supabase.from("notifications").insert([newNotification]);
+        if (insertError) {
+          console.error("Error saving completion notification:", insertError);
+        } else {
+          setNotifications((prev) => [...prev, newNotification]);
+          setLearningPeriodComplete(true);
+          await supabase
+            .from("settings")
+            .upsert({ key: "learningPeriodComplete", value: true, user_id: userId })
+            .then(({ error: upsertError }) => {
+              if (upsertError) console.error("Error saving learning period:", upsertError);
+            });
+        }
+      });
       hasCompletedLearningRef.current = true;
     } catch (error) {
       console.error("Completion Notification Error:", error);
@@ -283,17 +344,24 @@ export default function Dashboard() {
         );
         const quote = response.data.text;
         setDailyQuote(quote);
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+        if (userError || !userData.user) {
+          console.error("User not authenticated:", userError);
+          return;
+        }
+        const userId = userData.user.id;
         await supabase
           .from("settings")
-          .upsert({ key: "dailyQuote", value: { dailyQuote: quote, dailyQuoteDate: today } });
+          .upsert({ key: "dailyQuote", value: { dailyQuote: quote, dailyQuoteDate: today }, user_id: userId });
 
         const nowTimestamp = new Date().getTime();
         const newNotification = {
-          id: nowTimestamp,
+          id: uuidv4(),
           title: "Daily Motivation",
           body: quote,
           timestamp: nowTimestamp,
           read: false,
+          user_id: userId,
         };
         const { error: insertError } = await supabase.from("notifications").insert([newNotification]);
         if (insertError) {
@@ -306,17 +374,24 @@ export default function Dashboard() {
         console.error("Error generating motivational quote:", error);
         const fallbackQuote = "Keep pushing forward—you’ve got this!";
         setDailyQuote(fallbackQuote);
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+        if (userError || !userData.user) {
+          console.error("User not authenticated:", userError);
+          return;
+        }
+        const userId = userData.user.id;
         await supabase
           .from("settings")
-          .upsert({ key: "dailyQuote", value: { dailyQuote: fallbackQuote, dailyQuoteDate: today } });
+          .upsert({ key: "dailyQuote", value: { dailyQuote: fallbackQuote, dailyQuoteDate: today }, user_id: userId });
 
         const nowTimestamp = new Date().getTime();
         const newNotification = {
-          id: nowTimestamp,
+          id: uuidv4(),
           title: "Daily Motivation",
           body: fallbackQuote,
           timestamp: nowTimestamp,
           read: false,
+          user_id: userId,
         };
         const { error: insertError } = await supabase.from("notifications").insert([newNotification]);
         if (insertError) {
@@ -338,7 +413,7 @@ export default function Dashboard() {
     if (!today) return;
     if (notificationPermission !== "granted") return;
     if (!hasEnoughData) return;
-  
+
     const checkSnackTime = async () => {
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -346,23 +421,22 @@ export default function Dashboard() {
         const entryDate = new Date(entry.date);
         return entryDate >= thirtyDaysAgo;
       });
-  
-      // Analyze eating patterns
+
       const foodFrequency = recentEntries.reduce((acc, entry) => {
         acc[entry.food] = (acc[entry.food] || 0) + 1;
         return acc;
       }, {} as Record<string, number>);
-  
+
       const mostFrequentFoods = Object.entries(foodFrequency)
         .sort((a, b) => b[1] - a[1])
         .slice(0, 3)
         .map(([food]) => food);
-  
+
       const leastFrequentFoods = Object.entries(foodFrequency)
         .sort((a, b) => a[1] - b[1])
         .slice(0, 3)
         .map(([food]) => food);
-  
+
       const mealTimes = recentEntries
         .map((entry) => {
           const [time, period] = entry.time.split(" ");
@@ -372,7 +446,7 @@ export default function Dashboard() {
           return hours * 60 + minutes;
         })
         .sort((a, b) => a - b);
-  
+
       const avgMealTime =
         mealTimes.length > 0
           ? mealTimes.reduce((sum, time) => sum + time, 0) / mealTimes.length
@@ -382,13 +456,13 @@ export default function Dashboard() {
       const typicalMealTime = `${avgMealHour}:${avgMealMinute.toString().padStart(2, "0")}${
         avgMealHour >= 12 ? "PM" : "AM"
       }`;
-  
+
       const gaps = [];
       for (let i = 1; i < mealTimes.length; i++) {
         gaps.push(mealTimes[i] - mealTimes[i - 1]);
       }
       const avgGap = gaps.length > 0 ? gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length : 180;
-  
+
       const now = new Date();
       const currentMinutes = now.getHours() * 60 + now.getMinutes();
       const todayTimes = todayEntries
@@ -401,19 +475,19 @@ export default function Dashboard() {
         })
         .sort((a, b) => a - b);
       const lastMealTime = todayTimes.length > 0 ? todayTimes[todayTimes.length - 1] : -Infinity;
-  
+
       const lastMealTimestamp = todayEntries.length > 0 ? new Date(`${todayEntries[todayEntries.length - 1].date} ${todayEntries[todayEntries.length - 1].time}`).getTime() : 0;
       if (lastSnackReminder && lastSnackReminder > lastMealTimestamp) {
         return;
       }
-  
+
       const recentSnackNotification = notifications.some(
         (notification) =>
           notification.title === "Snack Time! 🍎" &&
-          now.getTime() - notification.timestamp < 30 * 60 * 1000 // 30-minute window
+          now.getTime() - notification.timestamp < 30 * 60 * 1000
       );
       if (recentSnackNotification) return;
-  
+
       if (currentMinutes - lastMealTime > avgGap) {
         const prompt = `Suggest a quick snack to help meet macro goals. Keep it positive and concise (1-2 sentences). Current intake: Protein ${currentProtein}g/${proteinGrams}g, Fat ${currentFat}g/${fatGrams}g, Carbs ${currentCarbs}g/${carbGrams}g. Based on the user's eating habits over the last 30 days, they frequently eat ${mostFrequentFoods.join(", ")}, tend to avoid ${leastFrequentFoods.join(", ")}, and typically eat around ${typicalMealTime}. Recent entries: ${JSON.stringify(recentEntries)}. Suggest a snack that aligns with their eating habits and helps meet their macro goals.`;
         try {
@@ -427,13 +501,20 @@ export default function Dashboard() {
             new Notification("Snack Time! 🍎", {
               body: `It’s ${now.toLocaleTimeString()}—time for a snack? ${snackSuggestion}`,
             });
-            const nowTimestamp = now.getTime();
+            const nowTimestamp = new Date().getTime();
+            const { data: userData, error: userError } = await supabase.auth.getUser();
+            if (userError || !userData.user) {
+              console.error("User not authenticated:", userError);
+              return;
+            }
+            const userId = userData.user.id;
             const newNotification = {
-              id: nowTimestamp,
+              id: uuidv4(),
               title: "Snack Time! 🍎",
               body: `It’s ${now.toLocaleTimeString()}—time for a snack? ${snackSuggestion}`,
               timestamp: nowTimestamp,
               read: false,
+              user_id: userId,
             };
             const { error: insertError } = await supabase.from("notifications").insert([newNotification]);
             if (insertError) {
@@ -443,7 +524,7 @@ export default function Dashboard() {
               setLastSnackReminder(nowTimestamp);
               await supabase
                 .from("settings")
-                .upsert({ key: "lastSnackReminder", value: nowTimestamp });
+                .upsert({ key: "lastSnackReminder", value: nowTimestamp, user_id: userId });
             }
           } catch (error) {
             console.error("Notification Error:", error);
@@ -453,10 +534,10 @@ export default function Dashboard() {
         }
       }
     };
-  
-    const intervalId = setInterval(checkSnackTime, 30 * 60 * 1000); // 30-minute interval
-    checkSnackTime(); // Run immediately on mount
-    return () => clearInterval(intervalId); // Clear interval on unmount
+
+    const intervalId = setInterval(checkSnackTime, 30 * 60 * 1000);
+    checkSnackTime();
+    return () => clearInterval(intervalId);
   }, [notificationPermission, entries, calorieGoal, proteinPercent, fatPercent, carbPercent, hasEnoughData, notifications, today]);
 
   useEffect(() => {
@@ -504,9 +585,15 @@ export default function Dashboard() {
           { headers: { "Content-Type": "application/json" } }
         );
         setReport(response.data.text);
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+        if (userError || !userData.user) {
+          console.error("User not authenticated:", userError);
+          return;
+        }
+        const userId = userData.user.id;
         await supabase
           .from("settings")
-          .upsert({ key: "dailyReport", value: { dailyReport: response.data.text, dailyReportDate: today } });
+          .upsert({ key: "dailyReport", value: { dailyReport: response.data.text, dailyReportDate: today }, user_id: userId });
         hasGeneratedReportRef.current = true;
       } catch (error) {
         console.error("Error generating report:", error);
@@ -528,6 +615,12 @@ export default function Dashboard() {
         </Link>
         <Link href="/notifications" className="text-blue-500 hover:underline">
           Notifications ({notifications.filter(n => !n.read).length})
+        </Link>
+        <Link href="/login" className="text-blue-500 hover:underline">
+          Login
+        </Link>
+        <Link href="/logout" className="text-blue-500 hover:underline">
+          Logout
         </Link>
       </nav>
       <div className="mb-6 bg-blue-50 p-4 rounded shadow text-center">
@@ -619,5 +712,13 @@ export default function Dashboard() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function Dashboard() {
+  return (
+    <ProtectedRoute>
+      <DashboardContent />
+    </ProtectedRoute>
   );
 }

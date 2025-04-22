@@ -4,6 +4,7 @@ import { Card, CardBody, Input, Button } from "@nextui-org/react";
 import Link from "next/link";
 import axios from "axios";
 import { supabase } from "@/lib/supabase";
+import { ProtectedRoute } from "../components/ProtectedRoute";
 
 interface FoodItem {
   food_name: string;
@@ -24,7 +25,7 @@ interface Entry {
   };
 }
 
-export default function FoodJournal() {
+function FoodJournalContent() {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [foodInput, setFoodInput] = useState("");
   const [searchResults, setSearchResults] = useState<FoodItem[]>([]);
@@ -35,7 +36,16 @@ export default function FoodJournal() {
 
   useEffect(() => {
     const fetchEntries = async () => {
-      const { data, error } = await supabase.from("entries").select("*");
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError || !userData.user) {
+        console.error("User not authenticated:", userError);
+        return;
+      }
+      const userId = userData.user.id;
+      const { data, error } = await supabase
+        .from("entries")
+        .select("*")
+        .eq("user_id", userId);
       if (error) {
         console.error("Error fetching entries:", error);
         return;
@@ -68,6 +78,12 @@ export default function FoodJournal() {
   };
 
   const handleSelectFood = async (food: FoodItem) => {
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    if (userError || !userData.user) {
+      console.error("User not authenticated:", userError);
+      return;
+    }
+    const userId = userData.user.id;
     const newEntry: Entry = {
       time: entryTime,
       date: entryDate,
@@ -77,6 +93,7 @@ export default function FoodJournal() {
         fat: food.fat,
         carbs: food.carbohydrates,
       },
+      user_id: userId,
     };
 
     const { data, error } = await supabase.from("entries").insert([newEntry]).select();
@@ -93,9 +110,15 @@ export default function FoodJournal() {
   return (
     <div className="min-h-screen bg-gray-100 p-6">
       <h1 className="text-3xl font-bold text-center mb-6 text-gray-900">Food Journal</h1>
-      <nav className="mb-6">
+      <nav className="mb-6 flex space-x-4">
         <Link href="/" className="text-blue-500 hover:underline">
           Back to Dashboard
+        </Link>
+        <Link href="/login" className="text-blue-500 hover:underline">
+          Login
+        </Link>
+        <Link href="/logout" className="text-blue-500 hover:underline">
+          Logout
         </Link>
       </nav>
       <Card className="mb-6">
@@ -178,5 +201,13 @@ export default function FoodJournal() {
         ))}
       </div>
     </div>
+  );
+}
+
+export default function FoodJournal() {
+  return (
+    <ProtectedRoute>
+      <FoodJournalContent />
+    </ProtectedRoute>
   );
 }
