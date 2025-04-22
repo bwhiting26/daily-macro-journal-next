@@ -338,7 +338,7 @@ export default function Dashboard() {
     if (!today) return;
     if (notificationPermission !== "granted") return;
     if (!hasEnoughData) return;
-
+  
     const checkSnackTime = async () => {
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -346,8 +346,24 @@ export default function Dashboard() {
         const entryDate = new Date(entry.date);
         return entryDate >= thirtyDaysAgo;
       });
-
-      const allTimes = recentEntries
+  
+      // Analyze eating patterns
+      const foodFrequency = recentEntries.reduce((acc, entry) => {
+        acc[entry.food] = (acc[entry.food] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+  
+      const mostFrequentFoods = Object.entries(foodFrequency)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([food]) => food);
+  
+      const leastFrequentFoods = Object.entries(foodFrequency)
+        .sort((a, b) => a[1] - b[1])
+        .slice(0, 3)
+        .map(([food]) => food);
+  
+      const mealTimes = recentEntries
         .map((entry) => {
           const [time, period] = entry.time.split(" ");
           let [hours, minutes] = time.split(":").map(Number);
@@ -356,13 +372,23 @@ export default function Dashboard() {
           return hours * 60 + minutes;
         })
         .sort((a, b) => a - b);
-
+  
+      const avgMealTime =
+        mealTimes.length > 0
+          ? mealTimes.reduce((sum, time) => sum + time, 0) / mealTimes.length
+          : 0;
+      const avgMealHour = Math.floor(avgMealTime / 60);
+      const avgMealMinute = Math.round(avgMealTime % 60);
+      const typicalMealTime = `${avgMealHour}:${avgMealMinute.toString().padStart(2, "0")}${
+        avgMealHour >= 12 ? "PM" : "AM"
+      }`;
+  
       const gaps = [];
-      for (let i = 1; i < allTimes.length; i++) {
-        gaps.push(allTimes[i] - allTimes[i - 1]);
+      for (let i = 1; i < mealTimes.length; i++) {
+        gaps.push(mealTimes[i] - mealTimes[i - 1]);
       }
       const avgGap = gaps.length > 0 ? gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length : 180;
-
+  
       const now = new Date();
       const currentMinutes = now.getHours() * 60 + now.getMinutes();
       const todayTimes = todayEntries
@@ -375,21 +401,21 @@ export default function Dashboard() {
         })
         .sort((a, b) => a - b);
       const lastMealTime = todayTimes.length > 0 ? todayTimes[todayTimes.length - 1] : -Infinity;
-
+  
       const lastMealTimestamp = todayEntries.length > 0 ? new Date(`${todayEntries[todayEntries.length - 1].date} ${todayEntries[todayEntries.length - 1].time}`).getTime() : 0;
       if (lastSnackReminder && lastSnackReminder > lastMealTimestamp) {
         return;
       }
-
+  
+      const recentSnackNotification = notifications.some(
+        (notification) =>
+          notification.title === "Snack Time! 🍎" &&
+          now.getTime() - notification.timestamp < 30 * 60 * 1000 // 30-minute window
+      );
+      if (recentSnackNotification) return;
+  
       if (currentMinutes - lastMealTime > avgGap) {
-        const recentSnackNotification = notifications.some(
-          (notification) =>
-            notification.title === "Snack Time! 🍎" &&
-            now.getTime() - notification.timestamp < 30 * 60 * 1000
-        );
-        if (recentSnackNotification) return;
-
-        const prompt = `Suggest a quick snack to help meet macro goals. Keep it positive and concise. Current intake: Protein ${currentProtein}g/${proteinGrams}g, Fat ${currentFat}g/${fatGrams}g, Carbs ${currentCarbs}g/${carbGrams}g. Analyze the user's eating habits over the last 30 days to identify patterns and preferences (e.g., frequently eaten foods, avoided foods, typical meal times). Here are the recent entries: ${JSON.stringify(recentEntries)}. Suggest a snack that aligns with their eating habits and helps meet their macro goals.`;
+        const prompt = `Suggest a quick snack to help meet macro goals. Keep it positive and concise (1-2 sentences). Current intake: Protein ${currentProtein}g/${proteinGrams}g, Fat ${currentFat}g/${fatGrams}g, Carbs ${currentCarbs}g/${carbGrams}g. Based on the user's eating habits over the last 30 days, they frequently eat ${mostFrequentFoods.join(", ")}, tend to avoid ${leastFrequentFoods.join(", ")}, and typically eat around ${typicalMealTime}. Recent entries: ${JSON.stringify(recentEntries)}. Suggest a snack that aligns with their eating habits and helps meet their macro goals.`;
         try {
           const response = await axios.post(
             `${process.env.NEXT_PUBLIC_BACKEND_URL}/claude-snack`,
@@ -427,10 +453,10 @@ export default function Dashboard() {
         }
       }
     };
-
-    const interval = setInterval(checkSnackTime, 30 * 60 * 1000);
-    checkSnackTime();
-    return () => clearInterval(interval);
+  
+    const intervalId = setInterval(checkSnackTime, 30 * 60 * 1000); // 30-minute interval
+    checkSnackTime(); // Run immediately on mount
+    return () => clearInterval(intervalId); // Clear interval on unmount
   }, [notificationPermission, entries, calorieGoal, proteinPercent, fatPercent, carbPercent, hasEnoughData, notifications, today]);
 
   useEffect(() => {
@@ -480,7 +506,7 @@ export default function Dashboard() {
         setReport(response.data.text);
         await supabase
           .from("settings")
-          .upsert({ key: "𝑑𝑎𝑖𝑙𝑦𝑅𝑒𝑝𝑜𝑟𝑡", value: { dailyReport: response.data.text, dailyReportDate: today } });
+          .upsert({ key: "dailyReport", value: { dailyReport: response.data.text, dailyReportDate: today } });
         hasGeneratedReportRef.current = true;
       } catch (error) {
         console.error("Error generating report:", error);

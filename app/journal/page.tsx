@@ -5,6 +5,13 @@ import Link from "next/link";
 import axios from "axios";
 import { supabase } from "@/lib/supabase";
 
+interface FoodItem {
+  food_name: string;
+  protein: number;
+  carbohydrates: number;
+  fat: number;
+}
+
 interface Entry {
   id?: number;
   time: string;
@@ -12,20 +19,19 @@ interface Entry {
   food: string;
   macros: {
     protein: string | number;
-    carbs: string | number;
     fat: string | number;
+    carbs: string | number;
   };
 }
 
 export default function FoodJournal() {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [foodInput, setFoodInput] = useState("");
-  const [searchResults, setSearchResults] = useState([]);
-  const [entryDate, setEntryDate] = useState(new Date().toISOString().split("T")[0]);
+  const [searchResults, setSearchResults] = useState<FoodItem[]>([]);
+  const [entryDate, setEntryDate] = useState(new Date().toLocaleDateString("en-CA"));
   const [entryTime, setEntryTime] = useState(
-    new Date().toTimeString().split(" ")[0].slice(0, 5)
+    new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit" }).replace(":", ":")
   );
-  const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
     const fetchEntries = async () => {
@@ -40,74 +46,48 @@ export default function FoodJournal() {
   }, []);
 
   const handleSearch = async () => {
+    if (!foodInput) return;
     console.log("handleSearch called with foodInput:", foodInput);
-    if (!foodInput.trim()) return;
-    console.log("Making API call to:", `${process.env.NEXT_PUBLIC_BACKEND_URL}/search-foods?query=${foodInput}`);
     try {
-      const response = await axios.get(
-        `${process.env.NEXT_PUBLIC_BACKEND_URL}/search-foods`,
-        { params: { query: foodInput } }
-      );
+      const url = `http://localhost:3001/search-foods?query=${encodeURIComponent(foodInput)}`;
+      console.log("Making API call to:", url);
+      const response = await axios.get(url);
       console.log("API response:", response.data);
-      const results = response.data.foods?.food || [];
+      const results = Array.isArray(response.data.foods.food)
+        ? response.data.foods.food
+        : response.data.foods.food
+        ? [response.data.foods.food]
+        : [];
       console.log("Parsed search results:", results);
       setSearchResults(results);
       console.log("searchResults state updated:", results);
     } catch (error) {
-      console.error("FoodJournal: Error searching foods:", error.message);
-      console.error("Error details:", error.response?.data || error);
+      console.error("Error searching for food:", error);
       setSearchResults([]);
     }
   };
 
-  const handleSelectFood = async (food: any) => {
-    const now = new Date();
-    const maxDate = now.toISOString().split("T")[0];
-    const selectedDate = new Date(entryDate);
-    const todayDate = new Date(maxDate);
-    const selectedDateTime = new Date(`${entryDate}T${entryTime}:00`);
-
-    if (selectedDate > todayDate) {
-      setErrorMessage("Cannot log a future date. Please select a date up to today.");
-      setEntryDate(maxDate);
-      return;
-    }
-
-    if (entryDate === maxDate && selectedDateTime > now) {
-      setErrorMessage("Cannot log a future time for today. Please select a time up to the current moment.");
-      setEntryTime(now.toTimeString().split(" ")[0].slice(0, 5));
-      return;
-    }
-
-    setErrorMessage("");
-
-    const formattedTime = selectedDateTime.toLocaleTimeString([], {
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-    });
-
-    const newEntry = {
-      time: formattedTime,
+  const handleSelectFood = async (food: FoodItem) => {
+    const newEntry: Entry = {
+      time: entryTime,
       date: entryDate,
       food: food.food_name,
       macros: {
-        protein: food.food_description.match(/Protein: (\d+\.?\d*)/)?.[1] || 0,
-        carbs: food.food_description.match(/Carbs: (\d+\.?\d*)/)?.[1] || 0,
-        fat: food.food_description.match(/Fat: (\d+\.?\d*)/)?.[1] || 0,
+        protein: food.protein,
+        fat: food.fat,
+        carbs: food.carbohydrates,
       },
     };
 
-    // Save to Supabase
     const { data, error } = await supabase.from("entries").insert([newEntry]).select();
     if (error) {
       console.error("Error saving entry to Supabase:", error);
       return;
     }
 
-    setEntries((prev) => [...prev, data[0]]);
-    setSearchResults([]);
+    setEntries((prev) => [...prev, ...data]);
     setFoodInput("");
+    setSearchResults([]);
   };
 
   return (
@@ -118,69 +98,85 @@ export default function FoodJournal() {
           Back to Dashboard
         </Link>
       </nav>
-      {errorMessage && (
-        <div className="mb-4 p-3 bg-red-100 text-red-700 rounded">
-          {errorMessage}
-        </div>
-      )}
-      <div className="mb-4 flex flex-col space-y-2">
-        <div className="flex space-x-2">
-          <Input
-            label="Search Food"
-            placeholder="Search for a food (e.g., apple)"
-            value={foodInput}
-            onChange={(e) => setFoodInput(e.target.value)}
-            classNames={{ label: "text-gray-900" }}
-          />
-          <Button color="primary" onPress={handleSearch}>
-            Search
-          </Button>
-        </div>
-        <div className="flex space-x-2">
-          <Input
-            type="date"
-            label="Date"
-            value={entryDate}
-            onChange={(e) => setEntryDate(e.target.value)}
-            max={new Date().toISOString().split("T")[0]}
-            classNames={{ label: "text-gray-900" }}
-          />
-          <Input
-            type="time"
-            label="Time"
-            value={entryTime}
-            onChange={(e) => setEntryTime(e.target.value)}
-            classNames={{ label: "text-gray-900" }}
-          />
-        </div>
-      </div>
-      <div className="mb-4">
-        {searchResults.length > 0 ? (
-          <Card className="mb-4">
-            <CardBody>
-              <h2 className="text-lg font-medium mb-2 text-gray-900">Search Results:</h2>
-              {searchResults.map((food: any) => (
-                <div
-                  key={food.food_id}
-                  className="p-3 cursor-pointer hover:bg-gray-100 text-gray-900"
-                  onClick={() => handleSelectFood(food)}
-                >
-                  {food.food_name} - {food.food_description}
-                </div>
-              ))}
+      <Card className="mb-6">
+        <CardBody>
+          <div className="flex flex-col space-y-4">
+            <Input
+              label="Date"
+              type="date"
+              value={entryDate}
+              onChange={(e) => setEntryDate(e.target.value)}
+              className="max-w-xs"
+              aria-label="Date Input"
+              classNames={{
+                input: "text-gray-900",
+                label: "text-gray-900",
+              }}
+            />
+            <Input
+              label="Time"
+              type="time"
+              value={entryTime}
+              onChange={(e) => setEntryTime(e.target.value)}
+              className="max-w-xs"
+              aria-label="Time Input"
+              classNames={{
+                input: "text-gray-900",
+                label: "text-gray-900",
+              }}
+            />
+            <div className="flex space-x-2 max-w-xs">
+              <Input
+                label="Search for a food"
+                placeholder="Enter food name"
+                value={foodInput}
+                onChange={(e) => {
+                  setFoodInput(e.target.value);
+                  if (!e.target.value) setSearchResults([]);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSearch();
+                }}
+                className="flex-1"
+                aria-label="Food Search Input"
+                classNames={{
+                  input: "text-gray-900",
+                  label: "text-gray-900",
+                  description: "text-gray-900",
+                  errorMessage: "text-gray-900",
+                }}
+              />
+              <Button color="primary" onPress={handleSearch} aria-label="Search Food Button" className="text-gray-900">
+                Search
+              </Button>
+            </div>
+            {searchResults.length > 0 ? (
+              <div className="mt-2 max-h-40 overflow-y-auto border border-gray-300 rounded p-2">
+                {searchResults.map((food, index) => (
+                  <div
+                    key={food.food_name + index}
+                    className="p-2 hover:bg-gray-200 cursor-pointer text-gray-900"
+                    onClick={() => handleSelectFood(food)}
+                  >
+                    {food.food_name} (P: {food.protein}g, C: {food.carbohydrates}g, F: {food.fat}g)
+                  </div>
+                ))}
+              </div>
+            ) : foodInput ? (
+              <div className="mt-2 text-gray-900">No search results found.</div>
+            ) : null}
+          </div>
+        </CardBody>
+      </Card>
+      <div className="space-y-4">
+        {entries.map((entry) => (
+          <Card key={entry.id}>
+            <CardBody className="text-gray-900">
+              {entry.date} {entry.time} - {entry.food} (P: {entry.macros.protein}g, C: {entry.macros.carbs}g, F: {entry.macros.fat}g)
             </CardBody>
           </Card>
-        ) : (
-          <p className="text-gray-900">No search results found.</p>
-        )}
+        ))}
       </div>
-      {entries.map((entry, index) => (
-        <Card key={entry.id || index} className="mb-2">
-          <CardBody className="text-gray-900">
-            {entry.date} {entry.time} - {entry.food} (P: {entry.macros.protein}g, C: {entry.macros.carbs}g, F: {entry.macros.fat}g)
-          </CardBody>
-        </Card>
-      ))}
     </div>
   );
 }
