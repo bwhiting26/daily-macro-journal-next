@@ -23,6 +23,7 @@ interface Entry {
     fat: string | number;
     carbs: string | number;
   };
+  user_id?: string; // Added user_id to the interface
 }
 
 function FoodJournalContent() {
@@ -112,7 +113,7 @@ function FoodJournalContent() {
       <h1 className="text-3xl font-bold text-center mb-6 text-gray-900">Food Journal</h1>
       <nav className="mb-6 flex space-x-4">
         <Link href="/" className="text-blue-500 hover:underline">
-          Back to Dashboard
+          Back to Home
         </Link>
         <Link href="/login" className="text-blue-500 hover:underline">
           Login
@@ -169,7 +170,7 @@ function FoodJournalContent() {
                   errorMessage: "text-gray-900",
                 }}
               />
-              <Button color="primary" onPress={handleSearch} aria-label="Search Food Button" className="text-gray-900">
+              <Button color="primary" onPress={handleSearch} aria-label="Search Food Button" className="text chac-gray-900">
                 Search
               </Button>
             </div>
