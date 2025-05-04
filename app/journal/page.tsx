@@ -1,10 +1,10 @@
 "use client";
 import { useState, useEffect } from "react";
-import { Card, CardBody, Input, Button } from "@nextui-org/react";
+import { Card, CardBody, Input, Button, Spinner } from "@nextui-org/react";
 import Link from "next/link";
 import axios from "axios";
 import { supabase } from "@/lib/supabase";
-import { ProtectedRoute } from "../components/ProtectedRoute";
+import { ProtectedRoute } from "app/components/ProtectedRoute";
 
 interface FoodItem {
   food_name: string;
@@ -23,13 +23,15 @@ interface Entry {
     fat: string | number;
     carbs: string | number;
   };
-  user_id?: string; // Added user_id to the interface
+  user_id?: string;
 }
 
 function FoodJournalContent() {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [foodInput, setFoodInput] = useState("");
   const [searchResults, setSearchResults] = useState<FoodItem[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false); // Added loading state for search
+  const [searchError, setSearchError] = useState<string | null>(null); // Added error state for search
   const [entryDate, setEntryDate] = useState(new Date().toLocaleDateString("en-CA"));
   const [entryTime, setEntryTime] = useState(
     new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit" }).replace(":", ":")
@@ -59,6 +61,8 @@ function FoodJournalContent() {
   const handleSearch = async () => {
     if (!foodInput) return;
     console.log("handleSearch called with foodInput:", foodInput);
+    setSearchLoading(true);
+    setSearchError(null);
     try {
       const url = `http://localhost:3001/search-foods?query=${encodeURIComponent(foodInput)}`;
       console.log("Making API call to:", url);
@@ -74,7 +78,10 @@ function FoodJournalContent() {
       console.log("searchResults state updated:", results);
     } catch (error) {
       console.error("Error searching for food:", error);
+      setSearchError("Failed to search for food. Please check your connection and try again.");
       setSearchResults([]);
+    } finally {
+      setSearchLoading(false);
     }
   };
 
@@ -156,7 +163,10 @@ function FoodJournalContent() {
                 value={foodInput}
                 onChange={(e) => {
                   setFoodInput(e.target.value);
-                  if (!e.target.value) setSearchResults([]);
+                  if (!e.target.value) {
+                    setSearchResults([]);
+                    setSearchError(null);
+                  }
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") handleSearch();
@@ -170,11 +180,19 @@ function FoodJournalContent() {
                   errorMessage: "text-gray-900",
                 }}
               />
-              <Button color="primary" onPress={handleSearch} aria-label="Search Food Button" className="text chac-gray-900">
-                Search
+              <Button
+                color="primary"
+                onPress={handleSearch}
+                aria-label="Search Food Button"
+                className="text-gray-900"
+                disabled={searchLoading}
+              >
+                {searchLoading ? <Spinner size="sm" color="white" /> : "Search"}
               </Button>
             </div>
-            {searchResults.length > 0 ? (
+            {searchError ? (
+              <div className="mt-2 text-red-500">{searchError}</div>
+            ) : searchResults.length > 0 ? (
               <div className="mt-2 max-h-40 overflow-y-auto border border-gray-300 rounded p-2">
                 {searchResults.map((food, index) => (
                   <div
