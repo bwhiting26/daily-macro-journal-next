@@ -17,7 +17,7 @@ require('dotenv').config({ path: rootEnvPath, override: false });
 
 const express = require('express');
 const axios = require('axios');
-const cors = require('cors'); // Import cors
+const cors = require('cors');
 const { createClient } = require("@supabase/supabase-js");
 const app = express();
 const port = 3001;
@@ -29,7 +29,6 @@ const allowedOrigins = [
 ];
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (e.g., mobile apps or curl requests)
     if (!origin) return callback(null, true);
     if (allowedOrigins.indexOf(origin) === -1) {
       const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
@@ -37,9 +36,9 @@ app.use(cors({
     }
     return callback(null, true);
   },
-  methods: ['GET', 'POST', 'OPTIONS'], // Allow these HTTP methods
-  allowedHeaders: ['Content-Type', 'Authorization'], // Allow these headers
-  credentials: true // Allow credentials if needed (e.g., cookies)
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
 }));
 
 // Validate environment variables
@@ -92,7 +91,7 @@ const refreshFatSecretToken = async () => {
       token_timestamp: Date.now(),
     };
     console.log('FatSecret token refreshed successfully:', {
-      access_token: '[REDACTED]', // Avoid logging sensitive data
+      access_token: '[REDACTED]',
       expires_in,
       token_timestamp: fatSecretToken.token_timestamp,
     });
@@ -144,6 +143,10 @@ app.get('/search-foods', ensureValidToken, async (req, res) => {
 // Claude API Endpoints
 app.post('/claude-snack', async (req, res) => {
   const { prompt } = req.body;
+  if (!prompt) {
+    return res.status(400).json({ error: 'Prompt is required' });
+  }
+
   try {
     const response = await axios.post(
       'https://api.anthropic.com/v1/messages',
@@ -167,13 +170,32 @@ app.post('/claude-snack', async (req, res) => {
     );
     res.json({ text: response.data.content[0].text });
   } catch (error) {
-    console.error('Error calling Claude API for snack:', error.response ? error.response.data : error.message);
-    res.status(500).json({ error: 'Failed to generate snack suggestion' });
+    console.error('Error calling Claude API for snack:', {
+      message: error.message,
+      response: error.response ? {
+        status: error.response.status,
+        data: error.response.data,
+        headers: error.response.headers,
+      } : null,
+      request: error.request ? {
+        method: error.request.method,
+        url: error.request.url,
+        headers: error.request.headers,
+      } : null,
+    });
+    res.status(500).json({ 
+      error: 'Failed to generate snack suggestion', 
+      details: error.response ? error.response.data : error.message 
+    });
   }
 });
 
 app.post('/claude-report', async (req, res) => {
   const { prompt } = req.body;
+  if (!prompt) {
+    return res.status(400).json({ error: 'Prompt is required' });
+  }
+
   try {
     const response = await axios.post(
       'https://api.anthropic.com/v1/messages',
@@ -197,8 +219,23 @@ app.post('/claude-report', async (req, res) => {
     );
     res.json({ text: response.data.content[0].text });
   } catch (error) {
-    console.error('Error calling Claude API for report:', error.response ? error.response.data : error.message);
-    res.status(500).json({ error: 'Failed to generate report' });
+    console.error('Error calling Claude API for report:', {
+      message: error.message,
+      response: error.response ? {
+        status: error.response.status,
+        data: error.response.data,
+        headers: error.response.headers,
+      } : null,
+      request: error.request ? {
+        method: error.request.method,
+        url: error.request.url,
+        headers: error.request.headers,
+      } : null,
+    });
+    res.status(500).json({ 
+      error: 'Failed to generate report', 
+      details: error.response ? error.response.data : error.message 
+    });
   }
 });
 

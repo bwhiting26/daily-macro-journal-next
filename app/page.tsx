@@ -34,7 +34,7 @@ function DashboardContent() {
   const [proteinPercent, setProteinPercent] = useState<number>(35);
   const [fatPercent, setFatPercent] = useState<number>(30);
   const [carbPercent, setCarbPercent] = useState<number>(35);
-  const { notifications, setNotifications, isNotificationsLoaded } = useNotifications();
+  const { notifications, setNotifications, isNotificationsLoaded, user, isUserLoading } = useNotifications();
   const [report, setReport] = useState("");
   const [reportLoading, setReportLoading] = useState(true);
   const [reportError, setReportError] = useState<string | null>(null);
@@ -45,24 +45,22 @@ function DashboardContent() {
   const [firstEntryDate, setFirstEntryDate] = useState<string | null>(null);
   const [lastSnackReminder, setLastSnackReminder] = useState<number | null>(null);
   const [today, setToday] = useState("");
-  const [userId, setUserId] = useState<string | null>(null);
+  const userId = user?.id ?? null;
 
   const hasCompletedLearningRef = useRef(learningPeriodComplete);
   const hasGeneratedReportRef = useRef(false);
 
   // Fetch initial data
   useEffect(() => {
+    if (isUserLoading) return; // Wait until user fetch is complete
+
+    if (!userId) {
+      return; // ProtectedRoute should redirect to login
+    }
+
     setToday(new Date().toLocaleDateString("en-CA"));
 
     const fetchInitialData = async () => {
-      const { data: userData, error: userError } = await supabase.auth.getUser();
-      if (userError || !userData.user) {
-        console.error("User not authenticated:", userError);
-        return;
-      }
-      const userId = userData.user.id;
-      setUserId(userId);
-
       // Fetch entries
       const { data: entriesData, error: entriesError } = await supabase
         .from("entries")
@@ -142,16 +140,16 @@ function DashboardContent() {
     };
 
     fetchInitialData();
-  }, [isNotificationsLoaded]); // Re-run when notifications are loaded
+  }, [isUserLoading, userId, isNotificationsLoaded]);
 
+  // Reintroduce missing variables
   const proteinGrams = ((proteinPercent / 100) * calorieGoal) / 4;
   const fatGrams = ((fatPercent / 100) * calorieGoal) / 9;
   const carbGrams = ((carbPercent / 100) * calorieGoal) / 4;
   const todayEntries = today ? (Array.isArray(entries) ? entries.filter((entry) => entry.date === today) : []) : [];
-  const currentProtein = todayEntries.reduce((sum, entry) => sum + Number(entry.macros?.protein || 0), 0);
-  const currentFat = todayEntries.reduce((sum, entry) => sum + Number(entry.macros?.fat || 0), 0);
-  const currentCarbs = todayEntries.reduce((sum, entry) => sum + Number(entry.macros?.carbs || 0), 0);
-
+  const currentProtein = todayEntries.reduce((sum: number, entry: Entry) => sum + Number(entry.macros?.protein || 0), 0);
+  const currentFat = todayEntries.reduce((sum: number, entry: Entry) => sum + Number(entry.macros?.fat || 0), 0);
+  const currentCarbs = todayEntries.reduce((sum: number, entry: Entry) => sum + Number(entry.macros?.carbs || 0), 0);
   const uniqueDays = today ? [...new Set(entries.map((entry) => entry.date))] : [];
   const hasEnoughData = uniqueDays.length >= 5;
   const isFirstDay = entries.length === 0 || (firstEntryDate && today === firstEntryDate);
@@ -167,92 +165,24 @@ function DashboardContent() {
       const firstDate = earliestEntry?.date;
       if (firstDate) {
         setFirstEntryDate(firstDate);
-        supabase.auth.getUser().then(async ({ data: userData, error: userError }) => {
-          if (userError || !userData.user) {
-            console.error("User not authenticated:", userError);
-            return;
-          }
-          const userId = userData.user.id;
-          await supabase
-            .from("settings")
-            .upsert({ key: "firstEntryDate", value: firstDate, user_id: userId })
-            .then(({ error: upsertError }) => {
-              if (upsertError) console.error("Error saving first entry date:", upsertError);
-            });
-        });
+        if (userId) {
+          // Wrap the async operation in an IIFE
+          (async () => {
+            try {
+              const { error: upsertError } = await supabase
+                .from("settings")
+                .upsert({ key: "firstEntryDate", value: firstDate, user_id: userId });
+              if (upsertError) {
+                console.error("Error saving first entry date:", upsertError);
+              }
+            } catch (err) {
+              console.error("Error in upsert operation:", err);
+            }
+          })();
+        }
       }
     }
-  }, [entries, firstEntryDate]);
-
-  useEffect(() => {
-    if (!today) return;
-
-    const generateReport = async () => {
-      setReportLoading(true);
-      setReportError(null);
-
-      if (entries.length === 0) {
-        setReport("Log your first meal to start tracking your macros!");
-        setReportLoading(false);
-        return;
-      }
-
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const yesterdayStr = yesterday.toLocaleDateString("en-CA");
-      const yesterdayEntries = entries.filter((entry) => entry.date === yesterdayStr);
-      const yesterdayProtein = yesterdayEntries.reduce((sum, entry) => sum + Number(entry.macros?.protein || 0), 0);
-      const yesterdayFat = yesterdayEntries.reduce((sum, entry) => sum + Number(entry.macros?.fat || 0), 0);
-      const yesterdayCarbs = yesterdayEntries.reduce((sum, entry) => sum + Number(entry.macros?.carbs || 0), 0);
-
-      const prompt = `📊 Generate a positive daily macro report for yesterday. Keep it encouraging, with no shaming. Include:
-      - A summary of the user's goals and actual intake.
-      - Intuitive, specific suggestions to help the user meet their goals, based on yesterday's entries. Suggestions can include:
-        * Adding a food (e.g., "Add 6 oz of chicken for 30g protein").
-        * Swapping a food (e.g., "Swap your apple for Greek yogurt to add 18g protein").
-        * Reducing a food (e.g., "Try having a bit less potato to balance your carbs").
-        * Adjusting quantities (e.g., "Reduce your rice from 300g to 250g and increase your ground beef from 8 oz to 10 oz").
-        * Or no suggestion if the user is on track (just celebrate their success).
-      Be creative and precise, focusing on the most impactful change. If no entries exist, provide a fresh-start message with a generic suggestion.
-
-      Goals:
-      - Calories: ${calorieGoal} kcal
-      - Protein: ${proteinPercent}% (${proteinGrams}g)
-      - Fat: ${fatPercent}% (${fatGrams}g)
-      - Carbs: ${carbPercent}% (${carbGrams}g)
-
-      Yesterday's Intake:
-      - Protein: ${yesterdayProtein}g
-      - Fat: ${yesterdayFat}g
-      - Carbs: ${yesterdayCarbs}g
-
-      Yesterday's Entries: ${yesterdayEntries.length > 0 ? JSON.stringify(yesterdayEntries) : "No entries logged."}`;
-
-      try {
-        const response = await axios.post(
-          `${process.env.NEXT_PUBLIC_BACKEND_URL}/claude-report`,
-          { prompt },
-          { headers: { "Content-Type": "application/json" } }
-        );
-        setReport(response.data.text);
-        if (!userId) {
-          console.error("User ID not available for saving report.");
-          setReportError("Failed to save the report due to authentication issues. Please try again.");
-          return;
-        }
-        await supabase
-          .from("settings")
-          .upsert({ key: "dailyReport", value: { dailyReport: response.data.text, dailyReportDate: today }, user_id: userId });
-        hasGeneratedReportRef.current = true;
-      } catch (error) {
-        console.error("Error generating report:", error);
-        setReportError("Failed to generate your daily report. Please try again later.");
-      } finally {
-        setReportLoading(false);
-      }
-    };
-    generateReport();
-  }, [calorieGoal, proteinPercent, fatPercent, carbPercent, entries, today, userId]);
+  }, [entries, firstEntryDate, userId]);
 
   useEffect(() => {
     if (!today || !hasEnoughData || !userId) return;
@@ -265,34 +195,34 @@ function DashboardContent() {
         return entryDate >= thirtyDaysAgo;
       });
 
-      const foodFrequency = recentEntries.reduce((acc, entry) => {
+      const foodFrequency = recentEntries.reduce((acc: Record<string, number>, entry: Entry) => {
         acc[entry.food] = (acc[entry.food] || 0) + 1;
         return acc;
-      }, {} as Record<string, number>);
+      }, {});
 
       const mostFrequentFoods = Object.entries(foodFrequency)
-        .sort((a, b) => b[1] - a[1])
+        .sort((a: [string, number], b: [string, number]) => b[1] - a[1])
         .slice(0, 3)
         .map(([food]) => food);
 
       const leastFrequentFoods = Object.entries(foodFrequency)
-        .sort((a, b) => a[1] - b[1])
+        .sort((a: [string, number], b: [string, number]) => a[1] - b[1])
         .slice(0, 3)
         .map(([food]) => food);
 
       const mealTimes = recentEntries
-        .map((entry) => {
+        .map((entry: Entry) => {
           const [time, period] = entry.time.split(" ");
           let [hours, minutes] = time.split(":").map(Number);
           if (period === "PM" && hours !== 12) hours += 12;
           if (period === "AM" && hours === 12) hours = 0;
           return hours * 60 + minutes;
         })
-        .sort((a, b) => a - b);
+        .sort((a: number, b: number) => a - b);
 
       const avgMealTime =
         mealTimes.length > 0
-          ? mealTimes.reduce((sum, time) => sum + time, 0) / mealTimes.length
+          ? mealTimes.reduce((sum: number, time: number) => sum + time, 0) / mealTimes.length
           : 0;
       const avgMealHour = Math.floor(avgMealTime / 60);
       const avgMealMinute = Math.round(avgMealTime % 60);
@@ -300,23 +230,23 @@ function DashboardContent() {
         avgMealHour >= 12 ? "PM" : "AM"
       }`;
 
-      const gaps = [];
+      const gaps: number[] = [];
       for (let i = 1; i < mealTimes.length; i++) {
         gaps.push(mealTimes[i] - mealTimes[i - 1]);
       }
-      const avgGap = gaps.length > 0 ? gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length : 180;
+      const avgGap = gaps.length > 0 ? gaps.reduce((sum: number, gap: number) => sum + gap, 0) / gaps.length : 180;
 
       const now = new Date();
       const currentMinutes = now.getHours() * 60 + now.getMinutes();
       const todayTimes = todayEntries
-        .map((entry) => {
+        .map((entry: Entry) => {
           const [time, period] = entry.time.split(" ");
           let [hours, minutes] = time.split(":").map(Number);
           if (period === "PM" && hours !== 12) hours += 12;
           if (period === "AM" && hours === 12) hours = 0;
           return hours * 60 + minutes;
         })
-        .sort((a, b) => a - b);
+        .sort((a: number, b: number) => a - b);
       const lastMealTime = todayTimes.length > 0 ? todayTimes[todayTimes.length - 1] : -Infinity;
 
       const lastMealTimestamp = todayEntries.length > 0 ? new Date(`${todayEntries[todayEntries.length - 1].date} ${todayEntries[todayEntries.length - 1].time}`).getTime() : 0;

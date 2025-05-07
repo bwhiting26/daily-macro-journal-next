@@ -1,108 +1,156 @@
 "use client";
-import { useState, useEffect } from "react";
-import { Card, CardBody, Button } from "@nextui-org/react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
+import { Card, CardBody, Button } from "@nextui-org/react";
+import { useNotifications } from "../context/NotificationContext";
 import { supabase } from "@/lib/supabase";
+import { ProtectedRoute } from "../components/ProtectedRoute";
 
 interface Notification {
-  id: number;
+  id: string;
   title: string;
   body: string;
   timestamp: number;
   read: boolean;
+  user_id: string;
 }
 
 export default function Notifications() {
-  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const { notifications, setNotifications, user } = useNotifications();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const isFetching = useRef(false); // Prevent concurrent fetches
+
+  const userId = user?.id ?? null;
 
   useEffect(() => {
-    const fetchNotifications = async () => {
-      const { data, error } = await supabase
-        .from("notifications")
-        .select("*")
-        .order("timestamp", { ascending: false });
-      if (error) {
-        console.error("Error fetching notifications:", error);
-        return;
+    if (!userId || isFetching.current) {
+      setLoading(false);
+      if (!userId) {
+        setError("User not authenticated");
       }
-      setNotifications(data || []);
+      return;
+    }
+
+    // If notifications are already loaded by NotificationContext, use them
+    if (notifications.length > 0) {
+      setLoading(false);
+      return;
+    }
+
+    const fetchNotifications = async () => {
+      isFetching.current = true;
+      try {
+        const { data, error } = await supabase
+          .from("notifications")
+          .select("*")
+          .eq("user_id", userId)
+          .order("timestamp", { ascending: false });
+        if (error) throw error;
+        setNotifications(data || []);
+      } catch (err) {
+        console.error("Error fetching notifications:", err);
+        setError("Failed to load notifications. Please try again later.");
+      } finally {
+        setLoading(false);
+        isFetching.current = false;
+      }
     };
 
     fetchNotifications();
-  }, []);
+  }, [userId]); // Only depend on userId, not setNotifications
 
-  const handleDismiss = async (id: number) => {
-    const { error } = await supabase.from("notifications").delete().eq("id", id);
-    if (error) {
-      console.error("Error deleting notification:", error);
-      return;
+  const markAsRead = async (id: string) => {
+    if (!userId) return;
+
+    try {
+      const { error } = await supabase
+        .from("notifications")
+        .update({ read: true })
+        .eq("id", id)
+        .eq("user_id", userId);
+      if (error) throw error;
+      setNotifications((prev) =>
+        prev.map((notification) =>
+          notification.id === id ? { ...notification, read: true } : notification
+        )
+      );
+    } catch (err) {
+      console.error("Error marking notification as read:", err);
     }
-    setNotifications((prev) => prev.filter((notification) => notification.id !== id));
   };
 
-  const handleMarkAsRead = async (id: number) => {
-    const { error } = await supabase
-      .from("notifications")
-      .update({ read: true })
-      .eq("id", id);
-    if (error) {
-      console.error("Error marking notification as read:", error);
-      return;
+  const dismissNotification = async (id: string) => {
+    if (!userId) return;
+
+    try {
+      const { error } = await supabase
+        .from("notifications")
+        .delete()
+        .eq("id", id)
+        .eq("user_id", userId);
+      if (error) throw error;
+      setNotifications((prev) => prev.filter((notification) => notification.id !== id));
+    } catch (err) {
+      console.error("Error dismissing notification:", err);
     }
-    setNotifications((prev) =>
-      prev.map((notification) =>
-        notification.id === id ? { ...notification, read: true } : notification
-      )
-    );
   };
+
+  if (loading) {
+    return <div className="text-center p-6">Loading notifications...</div>;
+  }
+
+  if (error) {
+    return <div className="text-center p-6 text-red-500">{error}</div>;
+  }
 
   return (
-    <div className="min-h-screen bg-gray-100 p-6">
-      <h1 className="text-3xl font-bold text-center mb-6 text-gray-900">Notifications</h1>
-      <nav className="mb-6">
-        <Link href="/" className="text-blue-500 hover:underline">
+    <ProtectedRoute>
+      <div className="min-h-screen bg-gray-100 p-6">
+        <h1 className="text-3xl font-bold text-center mb-6 text-gray-900">Notifications</h1>
+        <Link href="/" className="text-blue-500 hover:underline mb-6 block">
           Back to Dashboard
         </Link>
-      </nav>
-      {notifications.length === 0 ? (
-        <p className="text-center text-gray-900">No notifications yet.</p>
-      ) : (
-        <div className="space-y-4">
-          {notifications.map((notification) => (
-            <Card key={notification.id} className="mb-2">
-              <CardBody className="text-gray-900">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <h2 className={`text-lg font-semibold ${notification.read ? "text-gray-500" : ""}`}>
-                      {notification.title}
-                    </h2>
-                    <p className="text-gray-600">{new Date(notification.timestamp).toLocaleString()}</p>
-                    <p className="mt-2">{notification.body}</p>
-                  </div>
-                  <div className="flex space-x-2">
-                    {!notification.read && (
+        {notifications.length === 0 ? (
+          <p className="text-center text-gray-600">No notifications yet.</p>
+        ) : (
+          <div className="space-y-4">
+            {notifications.map((notification) => (
+              <Card key={notification.id} className="shadow-md">
+                <CardBody>
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h2 className="text-lg font-semibold">{notification.title}</h2>
+                      <p className="text-gray-600">
+                        {new Date(notification.timestamp).toLocaleString()}
+                      </p>
+                      <p className="mt-2">{notification.body}</p>
+                    </div>
+                    <div className="flex space-x-2">
+                      {!notification.read && (
+                        <Button
+                          size="sm"
+                          color="primary"
+                          onPress={() => markAsRead(notification.id)} // Changed onClick to onPress
+                        >
+                          Mark as Read
+                        </Button>
+                      )}
                       <Button
-                        color="primary"
-                        onPress={() => handleMarkAsRead(notification.id)}
-                        aria-label={`Mark notification as read: ${notification.title}`}
+                        size="sm"
+                        color="danger"
+                        onPress={() => dismissNotification(notification.id)} // Changed onClick to onPress
                       >
-                        Mark as Read
+                        Dismiss
                       </Button>
-                    )}
-                    <Button
-                      color="danger"
-                      onPress={() => handleDismiss(notification.id)}
-                      aria-label={`Dismiss notification: ${notification.title}`}
-                    >
-                      Dismiss
-                    </Button>
+                    </div>
                   </div>
-                </div>
-              </CardBody>
-            </Card>
-          ))}
-        </div>
-      )}
-    </div>
+                </CardBody>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
+    </ProtectedRoute>
   );
 }

@@ -7,16 +7,24 @@ export default function Logout() {
   const router = useRouter();
 
   useEffect(() => {
-    const signOut = async () => {
-      await supabase.auth.signOut();
-      router.push("/login");
+    const logout = async () => {
+      try {
+        // Attempt to sign out with a timeout
+        await Promise.race([
+          supabase.auth.signOut(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("Sign out timed out")), 5000))
+        ]);
+      } catch (error) {
+        console.error("Error signing out:", error);
+      } finally {
+        // Clear session regardless of success
+        localStorage.removeItem("supabase.auth.token");
+        router.push("/login");
+      }
     };
-    signOut();
+
+    logout();
   }, [router]);
 
-  return (
-    <div className="min-h-screen bg-gray-100 p-6 flex items-center justify-center">
-      <p className="text-gray-900">Logging out...</p>
-    </div>
-  );
+  return <div>Logging out...</div>;
 }
