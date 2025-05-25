@@ -6,6 +6,9 @@ const backendEnvPath = path.resolve(__dirname, './.env');
 if (!fs.existsSync(backendEnvPath)) {
   throw new Error(`Environment file not found at ${backendEnvPath}. Please create backend/.env with FATSECRET_CLIENT_ID, FATSECRET_CLIENT_SECRET, FATSECRET_API_KEY, and ANTHROPIC_API_KEY.`);
 }
+// Load environment variables from backend/.env (e.g., FatSecret, Anthropic API keys).
+// These variables take precedence over those in .env.local due to the loading order
+// and the override:false setting on the .env.local load.
 require('dotenv').config({ path: backendEnvPath });
 
 // Load environment variables from ../.env.local (Supabase), merging with existing ones
@@ -13,6 +16,9 @@ const rootEnvPath = path.resolve(__dirname, '../.env.local');
 if (!fs.existsSync(rootEnvPath)) {
   throw new Error(`Environment file not found at ${rootEnvPath}. Please create .env.local with NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.`);
 }
+// Load environment variables from ../.env.local (e.g., Supabase keys accessible by Next.js).
+// The 'override: false' ensures that if a variable with the same name was already
+// loaded from backend/.env, it will not be overwritten by the value in .env.local.
 require('dotenv').config({ path: rootEnvPath, override: false });
 
 const express = require('express');
@@ -22,6 +28,13 @@ const { createClient } = require("@supabase/supabase-js");
 const app = express();
 const port = 3001;
 
+// IMPORTANT FOR PRODUCTION:
+// 1. Ensure 'allowedOrigins' is updated with your specific production frontend URL(s), using HTTPS.
+//    The current placeholder 'https://your-render-app.onrender.com' MUST be replaced.
+//    Example for production: const allowedOrigins = ['https://www.youractualapp.com']; (plus localhost for dev)
+// 2. For development, 'http://localhost:3000' is typically fine.
+// 3. If your frontend and backend are on the same domain (even different subdomains) in production,
+//    ensure the CORS policy correctly reflects this.
 // Enable CORS for specific origins
 const allowedOrigins = [
   'http://localhost:3000', // Development frontend
@@ -64,53 +77,78 @@ app.use(express.json());
 const FATSECRET_CLIENT_ID = process.env.FATSECRET_CLIENT_ID;
 const FATSECRET_CLIENT_SECRET = process.env.FATSECRET_CLIENT_SECRET;
 let fatSecretToken = {
-  access_token: process.env.FATSECRET_API_KEY,
-  expires_in: 86400, // Assume 24 hours (86400 seconds), adjust based on FatSecret's response
-  token_timestamp: Date.now(), // When the token was last refreshed
+  access_token: null,
+  expires_in: 0,
+  token_timestamp: 0, // Or Date.now() if you prefer, but will be updated on fetch
 };
 
-// Function to refresh the FatSecret token using Client Credentials Grant
-const refreshFatSecretToken = async () => {
-  try {
-    const authHeader = Buffer.from(`${FATSECRET_CLIENT_ID}:${FATSECRET_CLIENT_SECRET}`).toString('base64');
-    const response = await axios.post(
-      'https://oauth.fatsecret.com/connect/token',
-      'grant_type=client_credentials&scope=basic',
-      {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Authorization': `Basic ${authHeader}`,
-        },
-      }
-    );
+let isRefreshing = false;
+let tokenPromise = null;
 
-    const { access_token, expires_in } = response.data;
-    fatSecretToken = {
-      access_token,
-      expires_in,
-      token_timestamp: Date.now(),
-    };
-    console.log('FatSecret token refreshed successfully:', {
-      access_token: '[REDACTED]',
-      expires_in,
-      token_timestamp: fatSecretToken.token_timestamp,
-    });
-  } catch (error) {
-    console.error('Error refreshing FatSecret token:', error.response ? error.response.data : error.message);
-    throw error;
+const refreshFatSecretToken = async () => {
+  if (isRefreshing && tokenPromise) {
+    console.log('A FatSecret token refresh is already in progress, returning existing promise.');
+    return tokenPromise; // Return the promise of the ongoing refresh
   }
+
+  isRefreshing = true;
+  tokenPromise = (async () => {
+    try {
+      console.log('Attempting to refresh FatSecret token...');
+      const authHeader = Buffer.from(`${FATSECRET_CLIENT_ID}:${FATSECRET_CLIENT_SECRET}`).toString('base64');
+      const response = await axios.post(
+        'https://oauth.fatsecret.com/connect/token',
+        'grant_type=client_credentials&scope=basic',
+        {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Authorization': `Basic ${authHeader}`,
+          },
+        }
+      );
+
+      const { access_token, expires_in } = response.data;
+      fatSecretToken = { // Update the global token variable directly
+        access_token,
+        expires_in,
+        token_timestamp: Date.now(),
+      };
+      console.log('FatSecret token refreshed successfully.');
+      return fatSecretToken.access_token; // Resolve the promise with the new token
+    } catch (error) {
+      console.error('Error refreshing FatSecret token:', error.response ? error.response.data : error.message);
+      // Invalidate token on error to force re-fetch attempt by next request
+      fatSecretToken.access_token = null; 
+      fatSecretToken.expires_in = 0;
+      throw error; // Rethrow to be caught by callers like ensureValidToken or initial fetch
+    } finally {
+      isRefreshing = false;
+      // tokenPromise = null; // Optional: clear tokenPromise once settled if not needed for re-entry
+    }
+  })();
+  return tokenPromise;
 };
 
 // Middleware to ensure a valid FatSecret token
 const ensureValidToken = async (req, res, next) => {
   const currentTime = Date.now();
-  const tokenAge = (currentTime - fatSecretToken.token_timestamp) / 1000; // Age in seconds
-  if (tokenAge >= fatSecretToken.expires_in - 60) { // Refresh 60 seconds before expiration
+  // Check if token exists and if its age is within expiry (minus buffer)
+  const tokenAge = fatSecretToken.access_token ? (currentTime - fatSecretToken.token_timestamp) / 1000 : Infinity;
+
+  if (!fatSecretToken.access_token || tokenAge >= (fatSecretToken.expires_in - 60)) { // If no token or token expired/expiring
+    console.log('FatSecret token is invalid or expiring, attempting refresh...');
     try {
-      await refreshFatSecretToken();
+      await refreshFatSecretToken(); // This now handles locking
     } catch (error) {
-      return res.status(500).json({ error: 'Failed to refresh FatSecret token' });
+      // refreshFatSecretToken already logs the detailed error
+      return res.status(500).json({ error: 'Failed to refresh FatSecret API token. Please try again later.' });
     }
+  }
+
+  // After attempting refresh, check again if token is available
+  if (!fatSecretToken.access_token) {
+    console.error('FatSecret token unavailable even after refresh attempt.');
+    return res.status(500).json({ error: 'FatSecret API token is currently unavailable. Please try again later.' });
   }
   next();
 };
@@ -184,8 +222,8 @@ app.post('/claude-snack', async (req, res) => {
       } : null,
     });
     res.status(500).json({ 
-      error: 'Failed to generate snack suggestion', 
-      details: error.response ? error.response.data : error.message 
+      error: 'Failed to generate snack suggestion.',
+      // Optional: message: 'The request to the AI service failed. Please try again later.'
     });
   }
 });
@@ -233,13 +271,30 @@ app.post('/claude-report', async (req, res) => {
       } : null,
     });
     res.status(500).json({ 
-      error: 'Failed to generate report', 
-      details: error.response ? error.response.data : error.message 
+      error: 'Failed to generate report.',
+      // Optional: message: 'The request to the AI service failed. Please try again later.'
     });
   }
 });
 
 // Start the server
-app.listen(port, () => {
-  console.log(`Server running at http://localhost:${port}`);
-});
+(async () => {
+  try {
+    console.log("Attempting initial FatSecret token acquisition...");
+    await refreshFatSecretToken();
+    if (!fatSecretToken.access_token) {
+      // This condition might be redundant if refreshFatSecretToken throws on failure and is caught
+      console.error("Initial FatSecret token acquisition failed: access_token is null.");
+      // Decide if server should start or exit. For now, log and continue.
+    } else {
+      console.log("Initial FatSecret token acquired successfully.");
+    }
+  } catch (error) {
+    console.error('Critical: Failed to obtain initial FatSecret token during server startup. FatSecret features will be unavailable.', error.message);
+    // Consider process.exit(1) if FatSecret is essential for app to run
+  }
+
+  app.listen(port, () => {
+    console.log(`Server running at http://localhost:${port}`);
+  });
+})();

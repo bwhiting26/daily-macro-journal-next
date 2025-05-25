@@ -7,123 +7,62 @@ import { supabase } from "@/lib/supabase";
 import { ProtectedRoute } from "app/components/ProtectedRoute";
 import { useNotifications } from "./context/NotificationContext";
 import { v4 as uuidv4 } from "uuid";
+import { Entry, AppNotification } from "./types"; // Import types
+import { useUserSettings } from "./hooks/useUserSettings";
+import { useJournalData } from "./hooks/useJournalData";
+import { useDailyQuote } from "./hooks/useDailyQuote";
 
-interface Entry {
-  time: string;
-  date: string;
-  food: string;
-  macros: {
-    protein: string | number;
-    fat: string | number;
-    carbs: string | number;
-  };
-}
-
-interface Notification {
-  id: string;
-  title: string;
-  body: string;
-  timestamp: number;
-  read: boolean;
-  user_id: string;
-}
 
 function DashboardContent() {
-  const [entries, setEntries] = useState<Entry[]>([]);
-  const [calorieGoal, setCalorieGoal] = useState<number>(2000);
-  const [proteinPercent, setProteinPercent] = useState<number>(35);
-  const [fatPercent, setFatPercent] = useState<number>(30);
-  const [carbPercent, setCarbPercent] = useState<number>(35);
-  const { notifications, setNotifications, isNotificationsLoaded, user, isUserLoading } = useNotifications();
-  const [report, setReport] = useState("");
-  const [reportLoading, setReportLoading] = useState(true);
-  const [reportError, setReportError] = useState<string | null>(null);
-  const [dailyQuote, setDailyQuote] = useState<string | null>(null);
-  const [quoteLoading, setQuoteLoading] = useState(true);
-  const [quoteError, setQuoteError] = useState<string | null>(null);
-  const [learningPeriodComplete, setLearningPeriodComplete] = useState(false);
-  const [firstEntryDate, setFirstEntryDate] = useState<string | null>(null);
-  const [lastSnackReminder, setLastSnackReminder] = useState<number | null>(null);
-  const [today, setToday] = useState("");
+  const { notifications, setNotifications, isNotificationsLoaded, user, isUserLoading, addNotification } = useNotifications();
   const userId = user?.id ?? null;
-
-  const hasCompletedLearningRef = useRef(learningPeriodComplete);
-  const hasGeneratedReportRef = useRef(false);
-
-  // Fetch initial data
+  
+  const [today, setToday] = useState("");
   useEffect(() => {
-    if (isUserLoading) return; // Wait until user fetch is complete
-
-    if (!userId) {
-      return; // ProtectedRoute should redirect to login
-    }
-
     setToday(new Date().toLocaleDateString("en-CA"));
+  }, []);
 
-    const fetchInitialData = async () => {
-      // Fetch entries
-      const { data: entriesData, error: entriesError } = await supabase
-        .from("entries")
-        .select("*")
-        .eq("user_id", userId);
-      if (entriesError) {
-        console.error("Error fetching entries:", entriesError);
-        return;
-      }
-      setEntries(entriesData || []);
+  // Use custom hooks
+  const {
+    calorieGoal, setCalorieGoal,
+    proteinPercent, setProteinPercent,
+    fatPercent, setFatPercent,
+    carbPercent, setCarbPercent,
+  } = useUserSettings();
 
-      // Fetch learning period
-      const { data: learningData, error: learningError } = await supabase
-        .from("settings")
-        .select("value")
-        .eq("key", "learningPeriodComplete")
-        .eq("user_id", userId)
-        .maybeSingle();
-      if (learningError) {
-        console.error("Error fetching learning period:", JSON.stringify(learningError, null, 2));
-        return;
-      }
-      if (learningData && learningData.value !== undefined) {
-        setLearningPeriodComplete(learningData.value);
-      }
+  const {
+    entries,
+    // setEntries, // Exposing setEntries if direct modification is needed, but not used in this refactor yet
+    learningPeriodComplete,
+    // isLoading: isJournalDataLoading, // Can be used for a loading spinner for journal section
+    proteinGrams,
+    fatGrams,
+    carbGrams,
+    todayEntries,
+    currentProtein,
+    currentFat,
+    currentCarbs,
+    uniqueDays,
+    hasEnoughData,
+    // isFirstDay, // Not directly used in JSX, but available
+    thirtyDayEntryStats, // Added this
+  } = useJournalData(userId, addNotification, { calorieGoal, proteinPercent, fatPercent, carbPercent }, today);
 
-      // Fetch first entry date
-      const { data: firstEntryData, error: firstEntryError } = await supabase
-        .from("settings")
-        .select("value")
-        .eq("key", "firstEntryDate")
-        .eq("user_id", userId)
-        .maybeSingle();
-      if (firstEntryError) {
-        console.error("Error fetching first entry date:", JSON.stringify(firstEntryError, null, 2));
-        return;
-      }
-      if (firstEntryData && firstEntryData.value !== undefined) {
-        setFirstEntryDate(firstEntryData.value);
-      }
+  const { dailyQuote, quoteLoading, quoteError } = useDailyQuote(userId, addNotification, isNotificationsLoaded);
 
-      // Wait for notifications to be loaded before fetching the daily quote
-      if (!isNotificationsLoaded) return;
+  const [report, setReport] = useState("");
+  const [reportLoading, setReportLoading] = useState(true); // This remains for now
+  const [reportError, setReportError] = useState<string | null>(null); // This remains for now
+  const [lastSnackReminder, setLastSnackReminder] = useState<number | null>(null);
+  
+  // Refs - remove if confirmed unused after full refactor
+  // const hasCompletedLearningRef = useRef(learningPeriodComplete); // learningPeriodComplete now comes from useJournalData
+  const hasGeneratedReportRef = useRef(false); // Keep if report generation logic uses it
 
-      // Fetch daily quote from hasSentDailyMotivation
-      const { data: motivationData, error: motivationError } = await supabase
-        .from("settings")
-        .select("value")
-        .eq("key", "hasSentDailyMotivation")
-        .eq("user_id", userId)
-        .maybeSingle();
-      if (motivationError) {
-        console.error("Error fetching daily motivation:", JSON.stringify(motivationError, null, 2));
-        return;
-      }
-      if (motivationData && motivationData.value && motivationData.value.date === new Date().toLocaleDateString("en-CA")) {
-        setDailyQuote(motivationData.value.dailyQuote);
-      } else {
-        setDailyQuote(null);
-      }
-      setQuoteLoading(false);
-
-      // Fetch last snack reminder
+  // Effect for fetching lastSnackReminder (this was part of the original fetchInitialData)
+  useEffect(() => {
+    if (!userId) return;
+    const fetchLastSnackReminder = async () => {
       const { data: snackData, error: snackError } = await supabase
         .from("settings")
         .select("value")
@@ -132,113 +71,30 @@ function DashboardContent() {
         .maybeSingle();
       if (snackError) {
         console.error("Error fetching last snack reminder:", JSON.stringify(snackError, null, 2));
-        return;
-      }
-      if (snackData && snackData.value !== undefined) {
+        if (addNotification) {
+          addNotification({ title: 'Error Loading Data', body: 'Could not load your snack reminder settings. Please refresh or try again later.', type: 'error' });
+        }
+      } else if (snackData && snackData.value !== undefined) {
         setLastSnackReminder(snackData.value);
       }
     };
+    fetchLastSnackReminder();
+  }, [userId, addNotification]);
 
-    fetchInitialData();
-  }, [isUserLoading, userId, isNotificationsLoaded]);
-
-  // Reintroduce missing variables
-  const proteinGrams = ((proteinPercent / 100) * calorieGoal) / 4;
-  const fatGrams = ((fatPercent / 100) * calorieGoal) / 9;
-  const carbGrams = ((carbPercent / 100) * calorieGoal) / 4;
-  const todayEntries = today ? (Array.isArray(entries) ? entries.filter((entry) => entry.date === today) : []) : [];
-  const currentProtein = todayEntries.reduce((sum: number, entry: Entry) => sum + Number(entry.macros?.protein || 0), 0);
-  const currentFat = todayEntries.reduce((sum: number, entry: Entry) => sum + Number(entry.macros?.fat || 0), 0);
-  const currentCarbs = todayEntries.reduce((sum: number, entry: Entry) => sum + Number(entry.macros?.carbs || 0), 0);
-  const uniqueDays = today ? [...new Set(entries.map((entry) => entry.date))] : [];
-  const hasEnoughData = uniqueDays.length >= 5;
-  const isFirstDay = entries.length === 0 || (firstEntryDate && today === firstEntryDate);
 
   useEffect(() => {
-    if (entries.length > 0 && !firstEntryDate) {
-      const earliestEntry = entries.reduce((earliest: Entry | null, entry: Entry): Entry | null => {
-        const entryDate = new Date(entry.date);
-        if (!earliest) return entry;
-        const earliestDate = new Date(earliest.date);
-        return entryDate < earliestDate ? entry : earliest;
-      }, null);
-      const firstDate = earliestEntry?.date;
-      if (firstDate) {
-        setFirstEntryDate(firstDate);
-        if (userId) {
-          // Wrap the async operation in an IIFE
-          (async () => {
-            try {
-              const { error: upsertError } = await supabase
-                .from("settings")
-                .upsert({ key: "firstEntryDate", value: firstDate, user_id: userId });
-              if (upsertError) {
-                console.error("Error saving first entry date:", upsertError);
-              }
-            } catch (err) {
-              console.error("Error in upsert operation:", err);
-            }
-          })();
-        }
-      }
+    // Ensure all required data is available before setting up or running checkSnackTime
+    if (!today || !hasEnoughData || !userId || !entries || !thirtyDayEntryStats) {
+        return;
     }
-  }, [entries, firstEntryDate, userId]);
-
-  useEffect(() => {
-    if (!today || !hasEnoughData || !userId) return;
 
     const checkSnackTime = async () => {
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      const recentEntries = entries.filter((entry) => {
-        const entryDate = new Date(entry.date);
-        return entryDate >= thirtyDaysAgo;
-      });
-
-      const foodFrequency = recentEntries.reduce((acc: Record<string, number>, entry: Entry) => {
-        acc[entry.food] = (acc[entry.food] || 0) + 1;
-        return acc;
-      }, {});
-
-      const mostFrequentFoods = Object.entries(foodFrequency)
-        .sort((a: [string, number], b: [string, number]) => b[1] - a[1])
-        .slice(0, 3)
-        .map(([food]) => food);
-
-      const leastFrequentFoods = Object.entries(foodFrequency)
-        .sort((a: [string, number], b: [string, number]) => a[1] - b[1])
-        .slice(0, 3)
-        .map(([food]) => food);
-
-      const mealTimes = recentEntries
-        .map((entry: Entry) => {
-          const [time, period] = entry.time.split(" ");
-          let [hours, minutes] = time.split(":").map(Number);
-          if (period === "PM" && hours !== 12) hours += 12;
-          if (period === "AM" && hours === 12) hours = 0;
-          return hours * 60 + minutes;
-        })
-        .sort((a: number, b: number) => a - b);
-
-      const avgMealTime =
-        mealTimes.length > 0
-          ? mealTimes.reduce((sum: number, time: number) => sum + time, 0) / mealTimes.length
-          : 0;
-      const avgMealHour = Math.floor(avgMealTime / 60);
-      const avgMealMinute = Math.round(avgMealTime % 60);
-      const typicalMealTime = `${avgMealHour}:${avgMealMinute.toString().padStart(2, "0")}${
-        avgMealHour >= 12 ? "PM" : "AM"
-      }`;
-
-      const gaps: number[] = [];
-      for (let i = 1; i < mealTimes.length; i++) {
-        gaps.push(mealTimes[i] - mealTimes[i - 1]);
-      }
-      const avgGap = gaps.length > 0 ? gaps.reduce((sum: number, gap: number) => sum + gap, 0) / gaps.length : 180;
+      // Destructure stats from the hook
+      const { mostFrequentFoods, leastFrequentFoods, avgGapInMinutes, typicalMealTime } = thirtyDayEntryStats;
 
       const now = new Date();
       const currentMinutes = now.getHours() * 60 + now.getMinutes();
-      const todayTimes = todayEntries
+      const todayTimes = todayEntries // todayEntries comes from useJournalData
         .map((entry: Entry) => {
           const [time, period] = entry.time.split(" ");
           let [hours, minutes] = time.split(":").map(Number);
@@ -261,8 +117,59 @@ function DashboardContent() {
       );
       if (recentSnackNotification) return;
 
-      if (currentMinutes - lastMealTime > avgGap) {
-        const prompt = `Suggest a quick snack to help meet macro goals. Keep it positive and concise (1-2 sentences). Current intake: Protein ${currentProtein}g/${proteinGrams}g, Fat ${currentFat}g/${fatGrams}g, Carbs ${currentCarbs}g/${carbGrams}g. Based on the user's eating habits over the last 30 days, they frequently eat ${mostFrequentFoods.join(", ")}, tend to avoid ${leastFrequentFoods.join(", ")}, and typically eat around ${typicalMealTime}. Recent entries: ${JSON.stringify(recentEntries)}. Suggest a snack that aligns with their eating habits and helps meet their macro goals.`;
+      const createAppAndBrowserSnackNotification = async (suggestionText: string) => {
+        const nowTimestamp = new Date().getTime();
+        const newAppNotificationPayload: AppNotification = {
+          id: uuidv4(),
+          title: "Snack Time! 🍎",
+          body: `It’s ${new Date().toLocaleTimeString()}—time for a snack? ${suggestionText}`,
+          timestamp: nowTimestamp,
+          read: false,
+          user_id: userId!,
+        };
+
+        const { error: insertError } = await supabase.from("notifications").insert([newAppNotificationPayload]);
+
+        if (insertError) {
+          console.error("Error saving snack notification:", insertError);
+          if (addNotification) {
+            addNotification({ title: "Database Error", body: "Could not save snack notification to your log.", type: "error" });
+          }
+        } else {
+          setNotifications((prev: AppNotification[]) => [...prev, newAppNotificationPayload]);
+          setLastSnackReminder(nowTimestamp);
+          await supabase
+            .from("settings")
+            .upsert({ key: "lastSnackReminder", value: nowTimestamp, user_id: userId });
+
+          if (typeof window !== "undefined" && "Notification" in window) {
+            if (Notification.permission === "granted") {
+              new Notification("Snack Time! 🍎", {
+                body: `It’s ${new Date().toLocaleTimeString()}—time for a snack? ${suggestionText}`,
+              });
+            } else if (Notification.permission !== "denied") {
+              Notification.requestPermission().then((permission) => {
+                if (permission === "granted") {
+                  new Notification("Snack Time! 🍎", {
+                    body: `It’s ${new Date().toLocaleTimeString()}—time for a snack? ${suggestionText}`,
+                  });
+                } else {
+                   if (addNotification) {
+                      addNotification({ title: "Snack Reminder", body: "Enable browser notifications to get snack alerts directly. Snack saved to your in-app notifications.", type: "info" });
+                   }
+                }
+              });
+            } else {
+              if (addNotification) {
+                  addNotification({ title: "Snack Reminder", body: "Browser notifications are disabled. Your snack suggestion is in the app's notification list.", type: "info" });
+              }
+            }
+          }
+        }
+      };
+
+      if (currentMinutes - lastMealTime > avgGapInMinutes) { // Use avgGapInMinutes from stats
+        const prompt = `Suggest a quick snack to help meet macro goals. Keep it positive and concise (1-2 sentences). Current intake: Protein ${currentProtein}g/${proteinGrams}g, Fat ${currentFat}g/${fatGrams}g, Carbs ${currentCarbs}g/${carbGrams}g. Based on the user's eating habits over the last 30 days, they frequently eat ${mostFrequentFoods.join(", ")}, tend to avoid ${leastFrequentFoods.join(", ")}, and typically eat around ${typicalMealTime}. Suggest a snack that aligns with their eating habits and helps meet their macro goals.`; // Removed recentEntries from prompt
         try {
           const response = await axios.post(
             `${process.env.NEXT_PUBLIC_BACKEND_URL}/claude-snack`,
@@ -270,44 +177,29 @@ function DashboardContent() {
             { headers: { "Content-Type": "application/json" } }
           );
           const snackSuggestion = response.data.text;
-          try {
-            new Notification("Snack Time! 🍎", {
-              body: `It’s ${now.toLocaleTimeString()}—time for a snack? ${snackSuggestion}`,
-            });
-            const nowTimestamp = new Date().getTime();
-            const newNotification: Notification = {
-              id: uuidv4(),
-              title: "Snack Time! 🍎",
-              body: `It’s ${now.toLocaleTimeString()}—time for a snack? ${snackSuggestion}`,
-              timestamp: nowTimestamp,
-              read: false,
-              user_id: userId!,
-            };
-            const { error: insertError } = await supabase.from("notifications").insert([newNotification]);
-            if (insertError) {
-              console.error("Error saving snack notification:", insertError);
-            } else {
-              setNotifications((prev: Notification[]) => [...prev, newNotification]);
-              setLastSnackReminder(nowTimestamp);
-              await supabase
-                .from("settings")
-                .upsert({ key: "lastSnackReminder", value: nowTimestamp, user_id: userId });
-            }
-          } catch (error) {
-            console.error("Notification Error:", error);
-          }
+          await createAppAndBrowserSnackNotification(snackSuggestion);
         } catch (error) {
           console.error("Snack Suggestion Error:", error);
+          if (addNotification) {
+            addNotification({ title: "Snack AI Error", body: "Could not generate a snack suggestion at this time.", type: "error"});
+          }
         }
       }
     };
 
     const intervalId = setInterval(checkSnackTime, 30 * 60 * 1000);
-    checkSnackTime();
+    checkSnackTime(); // Initial check
     return () => clearInterval(intervalId);
-  }, [entries, calorieGoal, proteinPercent, fatPercent, carbPercent, hasEnoughData, notifications, today, userId, setNotifications]);
+  }, [
+      entries, calorieGoal, proteinPercent, fatPercent, carbPercent, hasEnoughData, 
+      notifications, today, userId, setNotifications, addNotification, 
+      proteinGrams, fatGrams, carbGrams, currentProtein, currentFat, currentCarbs, 
+      todayEntries, thirtyDayEntryStats, lastSnackReminder // Added thirtyDayEntryStats & lastSnackReminder
+  ]);
 
-  if (!today) return null;
+
+  if (!today || isUserLoading ) return <div className="min-h-screen bg-gray-100 p-6 flex justify-center items-center"><Spinner label="Loading dashboard..." /></div>;
+  // Add isJournalDataLoading to the condition above if you want a spinner for journal data section specifically
 
   return (
     <div className="min-h-screen bg-gray-100 p-6">
@@ -335,13 +227,13 @@ function DashboardContent() {
         ) : dailyQuote ? (
           <p className="italic text-gray-700">{dailyQuote}</p>
         ) : (
-          <p className="text-gray-700">No daily motivation available.</p>
+          <p className="text-gray-700">No daily motivation available today.</p>
         )}
       </div>
       {!learningPeriodComplete && (
         <div className="mb-6 bg-yellow-100 p-4 rounded shadow">
           <h2 className="text-xl font-semibold mb-2">Learning Your Habits</h2>
-          <p>We’re getting to know your eating habits! Log your meals for 5 days to unlock personalized insights. Days logged: {uniqueDays.length}/5</p>
+          <p>We’re getting to know your eating habits! Log your meals for 5 days to unlock personalized insights. Days logged: {uniqueDays ? uniqueDays.length : 0}/5</p>
         </div>
       )}
       <Card className="mb-6">
@@ -363,12 +255,10 @@ function DashboardContent() {
           value={calorieGoal.toString()}
           onChange={(e) => {
             const value = Number(e.target.value);
-            if (value < 0) {
-              alert("Calorie goal cannot be negative. Please enter a positive number.");
-              return;
-            }
             setCalorieGoal(value);
           }}
+          isInvalid={calorieGoal < 0}
+          errorMessage={calorieGoal < 0 ? "Calorie goal cannot be negative." : ""}
           className="max-w-xs"
           aria-label="Calorie Goal Input"
         />
@@ -380,12 +270,10 @@ function DashboardContent() {
           value={proteinPercent.toString()}
           onChange={(e) => {
             const value = Number(e.target.value);
-            if (value < 0 || value > 100) {
-              alert("Protein percentage must be between 0 and 100.");
-              return;
-            }
             setProteinPercent(value);
           }}
+          isInvalid={proteinPercent < 0 || proteinPercent > 100}
+          errorMessage={(proteinPercent < 0 || proteinPercent > 100) ? "Protein percentage must be between 0 and 100." : ""}
           aria-label="Protein Percentage Input"
         />
         <Input
@@ -394,12 +282,10 @@ function DashboardContent() {
           value={fatPercent.toString()}
           onChange={(e) => {
             const value = Number(e.target.value);
-            if (value < 0 || value > 100) {
-              alert("Fat percentage must be between 0 and 100.");
-              return;
-            }
             setFatPercent(value);
           }}
+          isInvalid={fatPercent < 0 || fatPercent > 100}
+          errorMessage={(fatPercent < 0 || fatPercent > 100) ? "Fat percentage must be between 0 and 100." : ""}
           aria-label="Fat Percentage Input"
         />
         <Input
@@ -408,12 +294,10 @@ function DashboardContent() {
           value={carbPercent.toString()}
           onChange={(e) => {
             const value = Number(e.target.value);
-            if (value < 0 || value > 100) {
-              alert("Carbs percentage must be between 0 and 100.");
-              return;
-            }
             setCarbPercent(value);
           }}
+          isInvalid={carbPercent < 0 || carbPercent > 100}
+          errorMessage={(carbPercent < 0 || carbPercent > 100) ? "Carbs percentage must be between 0 and 100." : ""}
           aria-label="Carbs Percentage Input"
         />
       </div>
